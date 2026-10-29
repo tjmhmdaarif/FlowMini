@@ -398,6 +398,7 @@ class DictationHud:
         "processing": ("THINKING…", WARNING),
         "loading": ("STARTING ASR", INFO),
         "pasted": ("PASTED ✓", SUCCESS),
+        "clipboard": ("ON CLIPBOARD", WARNING),
     }
 
     def __init__(self):
@@ -1069,6 +1070,9 @@ class FlowMiniApp:
             polished = (data.get("polished") or data.get("raw") or "") if data else ""
             self._hud_show("pasted", polished)
             self._hud_hide_later(2600)
+        elif event == "paste_failed":
+            self._hud_show("clipboard", "focus moved away — click your app, press Ctrl+V")
+            self._hud_hide_later(5000)
         elif event == "idle":
             self._hud_hide_later(1200)
 

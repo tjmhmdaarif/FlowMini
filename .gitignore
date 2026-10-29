@@ -16,6 +16,7 @@ flowmini_sessions.db
 
 # Learned words (personal)
 learned_words.json
+snippets.json
 
 # PyInstaller build output
 build/

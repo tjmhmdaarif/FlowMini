@@ -44,6 +44,7 @@ from snippets import SnippetManager, Snippet, get_snippets_path
 from auto_learn import AutoLearner
 import io
 import ctypes
+from ctypes import wintypes
 import requests
 import numpy as np
 import scipy.io.wavfile as wav
@@ -290,6 +291,124 @@ def activate_hwnd(hwnd):
         return False
 
 
+# --- robust foreground restore (the "paste lands in the right app" fix) ------
+_user32.BringWindowToTop.argtypes = [ctypes.c_void_p]
+_user32.BringWindowToTop.restype = ctypes.c_int
+_user32.AttachThreadInput.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_int]
+_user32.AttachThreadInput.restype = ctypes.c_int
+_user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_user32.GetWindowThreadProcessId.restype = ctypes.c_uint
+_user32.keybd_event.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ulong, ctypes.c_void_p]
+_user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+_kernel32.GetCurrentThreadId.restype = ctypes.c_uint
+
+
+class _GUITHREADINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT),
+    ]
+
+
+_user32.GetGUIThreadInfo.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+_user32.GetGUIThreadInfo.restype = ctypes.c_int
+_user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                                 ctypes.c_void_p, ctypes.c_void_p]
+_user32.SendMessageW.restype = ctypes.c_void_p
+
+EM_GETSEL = 0x00B0
+EM_REPLACESEL = 0x00C2  # wParam=TRUE -> undoable; lParam -> text
+EDIT_CLASSES = {"edit", "richedit", "richedit20w", "richedit50w", "riched20w", "riched20"}
+
+
+def force_foreground(hwnd, attempts=5):
+    """Bring hwnd to the foreground, robust against Windows' foreground lock.
+
+    Plain SetForegroundWindow is routinely DENIED when the calling process
+    did not receive the last input event — the classic reason a dictation
+    app's paste ends up in the wrong window (or nowhere). Until the focus
+    actually lands, workarounds are layered like the native helpers of the
+    major dictation products:
+      1. ShowWindow + BringWindowToTop + SetForegroundWindow
+      2. AttachThreadInput to the current foreground thread while retrying
+      3. a dummy ALT tap, which clears the foreground restriction
+    Returns True only when GetForegroundWindow() is really hwnd.
+    """
+    if not hwnd or not _user32.IsWindow(hwnd):
+        return False
+    if _user32.GetForegroundWindow() == hwnd:
+        return True
+    me = _kernel32.GetCurrentThreadId()
+    for _ in range(attempts):
+        fg = _user32.GetForegroundWindow()
+        fg_thread = _user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        try:
+            _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        except Exception:
+            pass
+        attached = False
+        if fg_thread:
+            attached = bool(_user32.AttachThreadInput(me, fg_thread, True))
+        _user32.BringWindowToTop(hwnd)
+        _user32.SetForegroundWindow(hwnd)
+        if attached:
+            _user32.AttachThreadInput(me, fg_thread, False)
+        time.sleep(0.05)
+        if _user32.GetForegroundWindow() == hwnd:
+            return True
+        # Still refused — the dummy ALT tap unlocks the foreground.
+        _user32.keybd_event(0x12, 0, 0, 0)       # ALT down
+        _user32.keybd_event(0x12, 0, 0x0002, 0)  # ALT up
+        _user32.SetForegroundWindow(hwnd)
+        time.sleep(0.05)
+        if _user32.GetForegroundWindow() == hwnd:
+            return True
+    return False
+
+
+def _edit_class_of(hwnd):
+    """Return the (lowercased) window class name of hwnd, or ''."""
+    buf = ctypes.create_unicode_buffer(64)
+    try:
+        _user32.GetClassNameW(hwnd, buf, 64)
+    except Exception:
+        return ""
+    return (buf.value or "").lower()
+
+
+def _insert_text_at_caret(hwnd, text):
+    """Insert text at the caret of a classic EDIT-class control — no focus needed.
+
+    Works through WM messages on the caret's window (EM_REPLACESEL with undo),
+    which keeps the insertion inside the app even when Windows refuses to
+    restore the foreground. Returns False for modern UI frameworks
+    (Chromium/Electron, UWP); the caller then falls back to clipboard-only.
+    """
+    if not hwnd or not _user32.IsWindow(hwnd):
+        return False
+    tid = _user32.GetWindowThreadProcessId(hwnd, None)
+    gti = _GUITHREADINFO()
+    gti.cbSize = ctypes.sizeof(_GUITHREADINFO)
+    if not tid or not _user32.GetGUIThreadInfo(tid, ctypes.byref(gti)):
+        return False
+    target = None
+    for candidate in (gti.hwndCaret, gti.hwndFocus):
+        if not candidate:
+            continue
+        if _edit_class_of(candidate) in EDIT_CLASSES:
+            target = candidate
+            break
+    if target is None:
+        return False
+    buf = ctypes.create_unicode_buffer(text + "\0")
+    _user32.SendMessageW(target, EM_REPLACESEL, ctypes.c_void_p(1),
+                         ctypes.cast(buf, ctypes.c_void_p))
+    return True
+
+
 _user32.GetClipboardData.argtypes = [ctypes.c_uint]
 _user32.GetClipboardData.restype = ctypes.c_void_p
 
@@ -477,6 +596,8 @@ class FlowMini:
         self.lock = threading.Lock()
         self.target_hwnd = None  # window to paste into (captured at record time)
         self.own_hwnd = None     # the app's own window; never used as a paste target
+        self.last_external_hwnd = None  # last foreground window that is not ours
+        threading.Thread(target=self._poll_foreground_loop, daemon=True).start()
 
         # Pipeline serialization: only ONE dictation pipeline runs at a time.
         # New utterances queue up, so recording/processing never overlap
@@ -519,6 +640,34 @@ class FlowMini:
         )
         self.stream.start()
 
+    def _poll_foreground_loop(self, interval=0.4):
+        """Keep last_external_hwnd fresh so the paste target survives focus
+        landing on our own window, tray menu or HUD between hotkey presses."""
+        while True:
+            try:
+                fg = get_foreground_hwnd()
+                if fg and fg != self.own_hwnd:
+                    self.last_external_hwnd = fg
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    def _capture_target(self):
+        """Pick the paste target: the window the user was actually typing in.
+
+        Captured at hotkey time. When the focus is on FlowMini's own UI we use
+        the last external foreground window (tracked continuously by the poller)
+        instead of a stale previous target — this is what makes "press the
+        hotkey anywhere" paste into whatever app was open before.
+        """
+        fg = get_foreground_hwnd()
+        if fg and fg != self.own_hwnd:
+            self.target_hwnd = fg
+        elif self.last_external_hwnd and _user32.IsWindow(self.last_external_hwnd):
+            self.target_hwnd = self.last_external_hwnd
+            print("[FlowMini] Focus is on FlowMini — pasting into the last external app")
+        return self.target_hwnd
+
     def start_recording(self):
         with self.lock:
             if self.recording:
@@ -530,11 +679,7 @@ class FlowMini:
             print("\n[FlowMini] Listening... (Speak now)")
             self.audio_frames = []
             self._started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            fg = get_foreground_hwnd()
-            if fg and fg != self.own_hwnd:
-                self.target_hwnd = fg
-            elif fg == self.own_hwnd:
-                print("[FlowMini] Focus is on FlowMini — pasting into the last target window")
+            self._capture_target()
             self.recording = True
             if not self.stream:
                 self.start_stream()
@@ -649,9 +794,7 @@ class FlowMini:
     def toggle_vad(self):
         self.vad_mode = not self.vad_mode
         if self.vad_mode:
-            fg = get_foreground_hwnd()
-            if fg and fg != self.own_hwnd:
-                self.target_hwnd = fg
+            self._capture_target()
             self._emit("vad_on")
             threading.Thread(target=self.calibrate_noise_floor, daemon=True).start()
         else:
@@ -1176,16 +1319,26 @@ class FlowMini:
             return raw_text
 
     def paste_into_active_app(self, text):
-        """Inject text into the active foreground window.
-        Uses Win32 clipboard API + SendInput Ctrl+V — reliable in ALL apps
-        (Notepad, browser address bars, Google search, LeetCode editor, etc.)."""
+        """Inject text into the app the user was typing in.
+
+        Layered like the native helpers of the major dictation products:
+          1. robustly restore the captured target window to the foreground
+             (ALT-tap + AttachThreadInput fallbacks, verified)
+          2. set the clipboard (verified) and send a real Ctrl+V keystroke
+          3. if focus could not be restored, insert at the caret directly
+             via EM_REPLACESEL (works for classic edit controls, no focus)
+          4. if neither is possible, keep the text on the clipboard and
+             surface it to the UI — never paste into the wrong app.
+        """
         if not text:
             return
         print(f"[FlowMini] Injecting text: '{text}'")
+        target = getattr(self, "target_hwnd", None)
+        focused = force_foreground(target) if target else False
+        if target and not focused:
+            print("[FlowMini] Could not restore the target window's focus")
         try:
-            # 0. Restore the target window's focus so the text lands there
-            activate_hwnd(getattr(self, "target_hwnd", None))
-            # 1. Set clipboard via Win32 API, verifying it actually stuck
+            # Set the clipboard via the Win32 API, verifying it actually stuck.
             set_clipboard_unicode(text)
             time.sleep(0.08)
             for _ in range(3):
@@ -1194,20 +1347,23 @@ class FlowMini:
                 print("[FlowMini] Clipboard verify failed — retrying...")
                 set_clipboard_unicode(text)
                 time.sleep(0.12)
-            # 2. Send Ctrl+V via SendInput (works in virtually every Windows app)
-            send_ctrl_v()
-            time.sleep(0.05)
-            print("[FlowMini] Successfully pasted into active application!")
+            if focused:
+                send_ctrl_v()
+                time.sleep(0.05)
+                print("[FlowMini] Successfully pasted into active application!")
+            elif target and _insert_text_at_caret(target, text):
+                print("[FlowMini] Focus was lost — inserted at the caret directly")
+            else:
+                self._emit("paste_failed", {"reason": "no_focus_no_caret"})
+                print("[FlowMini] Text is ON THE CLIPBOARD — click your app and press Ctrl+V")
         except Exception as e:
             print(f"[FlowMini] Paste error: {e}")
-            # Fallback to pyperclip + pyautogui
             try:
                 pyperclip.copy(text)
-                time.sleep(0.1)
-                pyautogui.hotkey("ctrl", "v")
-                print("[FlowMini] Paste fallback dispatched")
+                self._emit("paste_failed", {"reason": f"error: {e}"})
+                print("[FlowMini] Text is on the clipboard — click your app and press Ctrl+V")
             except Exception as e2:
-                print(f"[FlowMini] Paste fallback also failed: {e2}")
+                print(f"[FlowMini] Clipboard fallback also failed: {e2}")
 
     def run_self_test(self):
         """Simulate an end-to-end pipeline test without requiring microphone speech."""

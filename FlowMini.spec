@@ -5,7 +5,13 @@ Build from the repo root inside your virtualenv:
 
     .venv\Scripts\pyinstaller.exe FlowMini.spec --noconfirm
 
-Produces dist\\FlowMini.exe (single windowed file, app icon included).
+Produces dist\\FlowMini\\ (onedir build):
+    dist\\FlowMini\\FlowMini.exe  + _internal\\ (libs, faster_whisper assets)
+
+One-dir instead of one-file on purpose: the onefile bootloader spawns a
+child process that hung forever whenever a second copy was launched
+while the first was still running (and startup cost is ~15 s of temp
+extraction on every launch in one-file mode). One-dir starts instantly.
 """
 import os
 
@@ -49,16 +55,14 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="FlowMini",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -67,3 +71,14 @@ exe = EXE(
     entitlements_file=None,
     icon=["flowmini.ico"],
 )
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="FlowMini",
+)
+

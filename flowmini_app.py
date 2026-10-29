@@ -1315,9 +1315,90 @@ def stt_selftest():
     return 0
 
 
+_SINGLE_INSTANCE_MUTEX_NAME = "FlowMini_SingleInstance_Mutex"
+_g_single_instance_handle = None  # keeps the OS handle alive for the process lifetime
+_kernel32 = None
+
+
+def _kernel32_lib():
+    """kernel32 loaded with use_last_error so error codes are reliable."""
+    global _kernel32
+    if _kernel32 is None:
+        _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        _kernel32.CreateMutexW.restype = ctypes.c_void_p
+        _kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        _kernel32.CloseHandle.restype = ctypes.c_int
+    return _kernel32
+
+
+def _acquire_single_instance_mutex(name=_SINGLE_INSTANCE_MUTEX_NAME):
+    """Ensure only one FlowMini instance runs at a time (Windows).
+
+    Double-clicking a one-file PyInstaller exe while the first copy is
+    still unpacking spawns a second instance; several instances then race
+    for the global hotkey and the microphone, and dictation breaks in
+    ways that look like random bugs. A named OS mutex makes exactly one
+    instance win; the OS releases it automatically when that process
+    exits, so quitting FlowMini always unblocks the next launch.
+
+    Returns an OS handle (int) on success, the string "exists" when
+    another instance already holds the mutex, or None on non-Windows
+    platforms / if the mutex API is unavailable (app still allowed to
+    run — the guard must never become the reason the app won't start).
+    """
+    global _g_single_instance_handle
+    if sys.platform != "win32":
+        return None
+    try:
+        k32 = _kernel32_lib()
+        handle = k32.CreateMutexW(None, False, name)
+    except Exception:
+        return None
+    if not handle:
+        return None
+    ERROR_ALREADY_EXISTS = 183
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+        k32.CloseHandle(handle)
+        return "exists"
+    _g_single_instance_handle = handle
+    return handle
+
+
+def _tell_already_running():
+    """Show a short notice when a second instance is blocked.
+
+    Uses the raw Win32 MessageBox (no Tk) — in a frozen windowed exe a
+    second instance must be able to show this without building a whole
+    Tk runtime, and it must survive even if Tk misbehaves.
+    """
+    try:
+        MB_OK = 0x00000000
+        MB_ICONINFORMATION = 0x00000040
+        MB_TOPMOST = 0x00040000
+        MB_SETFOREGROUND = 0x00010000
+        user32 = ctypes.windll.user32
+        user32.MessageBoxW(
+            None,
+            "FlowMini is already running on this computer.\n\n"
+            "Look for its window or the tray icon near the clock, and use "
+            "Ctrl+Alt+D to start/stop dictation.\n\n"
+            "(A second copy was blocked: two instances would fight over "
+            "the microphone and the Ctrl+Alt+D hotkey.)",
+            "FlowMini already running",
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND,
+        )
+    except Exception:
+        print("[FlowMini] Another instance is already running - exiting.")
+
+
 def main():
     if "--selftest-stt" in sys.argv:
         raise SystemExit(stt_selftest())
+    guard = _acquire_single_instance_mutex()
+    if guard == "exists":
+        _tell_already_running()
+        return
     FlowMiniApp().run()
 
 

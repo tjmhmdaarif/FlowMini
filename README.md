@@ -42,10 +42,14 @@ no subscription, no telemetry you didn't ask for.
 
 ### Option A — download the app (no Python needed)
 
-1. Grab **`FlowMini.exe`** from the [latest release](../../releases/latest).
-2. Put it in any folder and double-click it. First launch downloads the Whisper model
-   once (~1.5 GB), then everything runs offline.
+1. Grab **`FlowMini-win64.zip`** from the [latest release](../../releases/latest).
+2. Unzip it anywhere and double-click **`FlowMini.exe`** inside the `FlowMini` folder.
+   First launch downloads the Whisper model once (~1.5 GB), then everything runs offline.
+   Settings, the session log and models all live next to the exe, so keep the folder together.
 3. Press **Ctrl+Alt+D**, speak, release — your text lands in the focused window.
+
+> Only **one instance at a time**: launching a second copy shows an "already running"
+> notice instead of silently fighting your first copy for the mic and the hotkey.
 
 > **Optional:** create a `.env` file next to the exe with `OPENROUTER_API_KEY=...`
 > to unlock the AI-polish tier. The default mode needs no key and no internet.
@@ -155,12 +159,12 @@ One focused improvement per day:
 - **Graceful degradation** — missing API key or unreachable polisher never breaks dictation;
   it falls back to the raw transcript.
 
-## 🛠️ Building the exe yourself
+## 🛠️ Building the app yourself
 
 ```powershell
 pip install pyinstaller
 .venv\Scripts\pyinstaller.exe FlowMini.spec --noconfirm
-# → dist\FlowMini.exe
+# → dist\FlowMini\FlowMini.exe  (+ _internal\ libs — keep the folder together)
 ```
 
 ## 🧪 Tests

@@ -1,0 +1,19 @@
+# Core runtime
+numpy>=2.0
+scipy>=1.14
+sounddevice>=0.5
+requests>=2.32
+pyperclip>=1.9
+PyAutoGUI>=0.9.54
+pynput>=1.8
+pydantic>=2.9
+openai>=1.60
+unidecode>=1.4
+
+# Speech-to-text (local, offline)
+faster-whisper>=1.1
+SpeechRecognition>=3.14
+
+# --- dev / build only ---
+# pyinstaller>=6.0
+# pytest>=8.0

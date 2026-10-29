@@ -1,0 +1,21 @@
+{
+  "trigger_key": "ctrl+alt+d",
+  "vad_trigger_key": "ctrl+alt+f",
+  "polish_model": "google/gemini-2.5-flash",
+  "vad_sensitivity": 2.5,
+  "vad_silence_gap_s": 1.0,
+  "vad_max_utterance_s": 30.0,
+  "polisher": true,
+  "cleanup_mode": "light",
+  "style_preset": "casual",
+  "stt_engine": "auto",
+  "stt_model": "large-v3-turbo",
+  "stt_device": "auto",
+  "stt_compute_type": "",
+  "stt_beam_size": 5,
+  "stt_accuracy_mode": "high",
+  "auto_learn": true,
+  "developer_mode": false,
+  "detect_language": true,
+  "translate_to_english": false
+}

@@ -84,6 +84,7 @@ DEFAULT_CONFIG = {
                                   # fast = lowest latency (beam 1, current behaviour)
     "auto_learn": True,           # learn from corrections and apply frequent ones
     "developer_mode": False,      # code-aware vocabulary and formatting
+    "show_hud": True,             # floating mic HUD near the cursor while dictating
     "detect_language": True,      # let Whisper auto-detect the spoken language per utterance
     "translate_to_english": False,  # transcribe and translate everything into English
 }

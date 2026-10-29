@@ -16,6 +16,7 @@
   "stt_accuracy_mode": "high",
   "auto_learn": true,
   "developer_mode": false,
+  "show_hud": true,
   "detect_language": true,
   "translate_to_english": false
 }

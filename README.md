@@ -36,6 +36,7 @@ no subscription, no telemetry you didn't ask for.
 | 🌍 **100+ languages** | Auto-detects the language you speak per utterance — or translate everything to English on the fly. |
 | 🔌 **Optional AI polish** | Level up to an LLM rewrite (OpenRouter / Gemini / OpenAI) for tone and style. Fully optional. |
 | 🕵️ **Private by default** | The only network call in the whole app is the optional polisher. Everything else is local. |
+| 🪟 **Floating HUD** | A borderless always-on-top card appears near your cursor while dictating — status, live mic level, and the final text, even with the app minimized to the tray. Never steals focus. |
 
 ## 🚀 Quick start
 
@@ -121,7 +122,8 @@ defaults are baked in. Highlights:
   "stt_model": "large-v3-turbo",
   "stt_device": "auto",
   "detect_language": true,
-  "translate_to_english": false
+  "translate_to_english": false,
+  "show_hud": true
 }
 ```
 
@@ -130,6 +132,19 @@ defaults are baked in. Highlights:
 - `custom_dictionary.json`: your own phrase expansions, applied **before** cleanup
 - `snippets.py`: define shortcodes that expand into full blocks of text
 - `developer_mode`: code-aware vocabulary and formatting
+- `show_hud`: the floating dictation card near your cursor (default `true`)
+
+## 🗓️ Roadmap
+
+One focused improvement per day:
+
+- [x] **Day 1** — floating dictation HUD (status + mic level + text near the cursor)
+- [ ] Day 2 — first-run model download progress bar
+- [ ] Day 3 — per-app profiles (code mode in editors, formal style in mail)
+- [ ] Day 4 — auto-start with Windows + tray quick-menu
+- [ ] Day 5 — CI: the EXE builds automatically on every tag
+- [ ] Day 6 — winget manifest (`winget install FlowMini`)
+- [ ] Day 7 — streaming partial transcript (words appear while you speak)
 
 ## 📊 Extras
 

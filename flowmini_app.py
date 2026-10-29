@@ -372,6 +372,160 @@ class WaveformCanvas(tk.Canvas):
 
 
 # ===========================================================================
+# Floating dictation HUD — the always-on-top card that appears near the
+# cursor while you dictate, so you get feedback even with the main window
+# minimized to the tray. Borderless, never steals focus (WS_EX_NOACTIVATE).
+# ===========================================================================
+class DictationHud:
+    """Small always-on-top status card shown near the mouse while dictating."""
+
+    # Win32 extended window styles
+    WS_EX_TOOLWINDOW = 0x00000080
+    WS_EX_NOACTIVATE = 0x08000000
+    GWL_EXSTYLE = -20
+    SM_XVIRTUALSCREEN = 76
+    SM_YVIRTUALSCREEN = 77
+    SM_CXVIRTUALSCREEN = 78
+    SM_CYVIRTUALSCREEN = 79
+
+    WIDTH = 340
+    HEIGHT = 74
+    MARGIN = 18
+
+    # state -> (label, dot/text color)
+    STATES = {
+        "recording": ("RECORDING", ACCENT_GLOW),
+        "processing": ("THINKING…", WARNING),
+        "loading": ("STARTING ASR", INFO),
+        "pasted": ("PASTED ✓", SUCCESS),
+    }
+
+    def __init__(self):
+        self.win = tk.Toplevel()
+        self.win.withdraw()                       # hidden until first dictation
+        self.win.overrideredirect(True)
+        self.win.configure(bg=BORDER)             # border colour = 1px frame
+        inner = tk.Frame(self.win, bg=BG_CARD)
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+
+        top = tk.Frame(inner, bg=BG_CARD)
+        top.pack(fill="x", padx=12, pady=(9, 0))
+        self.dot = tk.Canvas(top, width=10, height=10, bg=BG_CARD,
+                             highlightthickness=0)
+        self.dot.create_oval(1, 1, 9, 9, fill=SUCCESS, width=0, tags="dot")
+        self.dot.pack(side="left")
+        self.status = tk.Label(top, text="IDLE", font=("Segoe UI", 10, "bold"),
+                               bg=BG_CARD, fg=SUCCESS)
+        self.status.pack(side="left", padx=(8, 0))
+        self.text = tk.Label(inner, text="", font=("Segoe UI", 10),
+                             bg=BG_CARD, fg=TEXT_SECONDARY, anchor="w")
+        self.text.pack(fill="x", padx=12, pady=(4, 0))
+
+        # thin level meter along the bottom edge
+        self.meter = tk.Canvas(inner, height=3, bg=BG_CARD, highlightthickness=0)
+        self.meter.pack(fill="x", padx=12, pady=(6, 8))
+        self._meter_id = None
+
+        self._ema = 0.0
+        self._state = None
+        self._visible = False
+
+        self.win.bind("<Map>", self._on_map)
+        self.win.withdraw()
+
+    # ------------------------------------------------------------- Win32 ---
+    def _on_map(self, _=None):
+        """After the window first maps, strip the taskbar entry / focus steal."""
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.win.winfo_id())
+            if not hwnd:
+                hwnd = self.win.winfo_id()
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, self.GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(
+                hwnd, self.GWL_EXSTYLE,
+                style | self.WS_EX_TOOLWINDOW | self.WS_EX_NOACTIVATE)
+        except Exception:
+            pass
+
+    def _cursor_pos(self):
+        pt = wintypes.POINT()
+        try:
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            return pt.x, pt.y
+        except Exception:
+            return 100, 100
+
+    def _place_near_cursor(self):
+        """Position above-right of the cursor, clamped to the virtual screen."""
+        cx, cy = self._cursor_pos()
+        u = ctypes.windll.user32
+        vx = u.GetSystemMetrics(self.SM_XVIRTUALSCREEN)
+        vy = u.GetSystemMetrics(self.SM_YVIRTUALSCREEN)
+        vw = u.GetSystemMetrics(self.SM_CXVIRTUALSCREEN) or 1920
+        vh = u.GetSystemMetrics(self.SM_CYVIRTUALSCREEN) or 1080
+        x = cx + self.MARGIN
+        y = cy - self.HEIGHT - self.MARGIN
+        x = max(vx + 4, min(x, vx + vw - self.WIDTH - 4))
+        y = max(vy + 4, min(y, vy + vh - self.HEIGHT - 4))
+        self.win.geometry(f"{self.WIDTH}x{self.HEIGHT}+{int(x)}+{int(y)}")
+
+    # ------------------------------------------------------------ public ---
+    def show(self, state, text=None):
+        """Show (or update) the HUD in the given state; positions at the cursor."""
+        label, color = self.STATES.get(state, self.STATES["processing"])
+        self.status.config(text=label, fg=color)
+        self.dot.itemconfig("dot", fill=color)
+        if text is not None:
+            self.set_text(text)
+        self._state = state
+        if not self._visible:
+            self._place_near_cursor()
+            self.win.deiconify()
+            self.win.attributes("-topmost", True)
+            try:
+                self.win.lift()
+            except Exception:
+                pass
+            self._visible = True
+
+    def set_text(self, text):
+        """Show a one-line, truncated transcript in the HUD."""
+        line = " ".join((text or "").split())
+        if len(line) > 60:
+            line = line[:59] + "…"
+        self.text.config(text=line, fg=TEXT_PRIMARY if line else TEXT_MUTED)
+
+    def hide(self):
+        if self._visible:
+            try:
+                self.win.withdraw()
+            except Exception:
+                pass
+            self._visible = False
+            self._state = None
+
+    @property
+    def visible(self):
+        return self._visible
+
+    def set_level(self, rms):
+        """Feed the mic RMS from the audio thread; drawn on the UI tick."""
+        self._ema = max(self._ema * 0.8, min(rms / 3000.0, 1.0))
+
+    def draw_meter(self):
+        """Repaint the bottom level meter (call from the app's 33ms tick)."""
+        if not self._visible:
+            return
+        self.meter.delete("all")
+        w = self.meter.winfo_width() or (self.WIDTH - 24)
+        self.meter.create_rectangle(0, 0, w, 3, fill=BG, width=0)
+        fill_w = int(w * self._ema)
+        if fill_w > 0:
+            color = ACCENT_GLOW if self._state == "recording" else INFO
+            self.meter.create_rectangle(0, 0, fill_w, 3, fill=color, width=0)
+
+
+# ===========================================================================
 # Main App
 # ===========================================================================
 class FlowMiniApp:
@@ -385,6 +539,8 @@ class FlowMiniApp:
         self._stats = {"sessions": 0, "words": 0, "latency": 0}
         self._typewriter_job = None
         self._status = "idle"
+        self.hud = None
+        self._hud_hide_job = None
 
         self.root = tk.Tk()
         self.root.title("FlowMini — Voice Dictation")
@@ -657,9 +813,13 @@ class FlowMiniApp:
 
     def on_level(self, rms, active):
         self.wave.set_level(rms / 3000.0, active)
+        if self.hud:
+            self.hud.set_level(rms)
 
     def _draw_waveform(self):
         self.wave.draw()
+        if self.hud:
+            self.hud.draw_meter()
         if self._status == "recording":
             self._pulse = (getattr(self, "_pulse", 0.0) + 0.05) % 1.0
             self._draw_record("recording", self._pulse)
@@ -864,7 +1024,56 @@ class FlowMiniApp:
     def _on_core_event(self, event, data=None):
         self.ui_queue.put(("core_event", event, data))
 
+    # ----------------------------------------------------------------- HUD --
+    def _hud_show(self, state, text=None):
+        """Lazily create the floating HUD and show it (no-op if disabled)."""
+        if not self.config.get("show_hud", True):
+            return
+        try:
+            if self.hud is None:
+                self.hud = DictationHud()
+            if self._hud_hide_job:
+                self.root.after_cancel(self._hud_hide_job)
+                self._hud_hide_job = None
+            self.hud.show(state, text)
+        except Exception as exc:
+            self.log(f"HUD unavailable: {exc}", "err")
+            self.hud = None
+
+    def _hud_hide_later(self, ms):
+        if self.hud is None or not self.hud.visible:
+            return
+        if self._hud_hide_job:
+            try:
+                self.root.after_cancel(self._hud_hide_job)
+            except Exception:
+                pass
+        self._hud_hide_job = self.root.after(ms, self._hud_hide)
+
+    def _hud_hide(self):
+        self._hud_hide_job = None
+        if self.hud:
+            self.hud.hide()
+
+    def _hud_sync(self, event, data):
+        """Mirror the core's state machine onto the floating HUD."""
+        if event == "recording_started":
+            self._hud_show("recording", "")
+        elif event == "recording_stopped":
+            self._hud_show("processing", "transcribing…")
+        elif event == "whisper_loading":
+            self._hud_show("loading", "first run downloads the model once (~1.5 GB)")
+        elif event == "asr_text" and self.hud:
+            self.hud.set_text((data.get("raw") or "") if data else "")
+        elif event == "pasted":
+            polished = (data.get("polished") or data.get("raw") or "") if data else ""
+            self._hud_show("pasted", polished)
+            self._hud_hide_later(2600)
+        elif event == "idle":
+            self._hud_hide_later(1200)
+
     def _handle_core_event(self, event, data=None):
+        self._hud_sync(event, data)
         if event == "recording_started":
             self.set_status("recording")
             self._set_transcript("", "", placeholder="Listening…")

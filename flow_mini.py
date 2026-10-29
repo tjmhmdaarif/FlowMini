@@ -1250,8 +1250,22 @@ class FlowMini:
         trimmed = self._trim_silence(audio_data)
         if self.stt_engine in ("whisper", "auto"):
             text = self._transcribe_whisper(trimmed)
-            if text is not None:
+            if text is not None and text.strip():
                 return text
+            if text is not None and not self.detect_language:
+                # A pinned Speech language that yields nothing would normally
+                # strand the user with "No speech detected" until they noticed
+                # the dropdown. Self-heal: one retry in auto-detect mode so a
+                # wrong language pick can never kill recognition.
+                print("[FlowMini] Pinned language produced no text — retrying with auto-detect")
+                pinned = self.detect_language
+                try:
+                    self.detect_language = True
+                    text = self._transcribe_whisper(trimmed)
+                finally:
+                    self.detect_language = pinned
+                if text:
+                    return text
             if self.stt_engine == "whisper":
                 print("[FlowMini] Whisper failed (stt_engine=whisper, no fallback)")
                 return ""

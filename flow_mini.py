@@ -111,6 +111,123 @@ def load_dotenv(path):
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+class ModelDownloadTracker:
+    """Cumulative byte tally for a Hugging Face model download.
+
+    huggingface_hub opens one tqdm progress bar per file; no bar knows the
+    grand total. This registry keeps (bytes_done, bytes_total) grouped by
+    the bar's descriptor (the stable file name hf sets) so the whole
+    snapshot can be reported as one percentage. Grouping by descriptor
+    (not instance id) means a mid-file resume opening a fresh bar for the
+    same file replaces the_old entry instead of double-counting bytes.
+    `tqdm_hook` is called from the download thread; `emit` runs on that
+    same thread, so plain dict access is safe.
+    """
+
+    def __init__(self, emit, min_interval_s=0.2):
+        self._bars = {}          # descriptor/stand-in key -> {"n","total"}
+        self._emit = emit
+        self._min_interval = float(min_interval_s or 0)
+        self._last_emit = 0.0
+
+    def update(self, bar):
+        """Record the current state of one tqdm progress bar."""
+        desc = str(getattr(bar, "desc", "") or "").strip()
+        key = desc[:64] if desc else f"#{id(bar)}"
+        self._bars[key] = {
+            "n": int(getattr(bar, "n", 0) or 0),
+            "total": int(getattr(bar, "total", 0) or 0),
+        }
+        self.notify()
+
+    def tally(self):
+        """(done_bytes, total_bytes_or_None) across every bar seen so far."""
+        done = 0
+        total = 0
+        known = False
+        for state in self._bars.values():
+            n = state["n"]
+            t = state["total"]
+            done += min(n, t) if t else n
+            if t:
+                total += t
+                known = True
+        return done, (total if known else None)
+
+    def pct(self):
+        """0-100 float, or None while any total is still unknown."""
+        done, total = self.tally()
+        if not total:
+            return None
+        return round(min(100.0, 100.0 * done / max(total, 1)), 1)
+
+    def message(self):
+        """Human banner line for the current tally."""
+        done, total = self.tally()
+        done_mb = round(done / (1024 * 1024))
+        pct = self.pct()
+        if total:
+            total_mb = round(total / (1024 * 1024))
+            if pct is not None:
+                return (f"downloading model — {pct:.0f}% "
+                        f"({done_mb}/{total_mb} MB)")
+        return f"downloading model — {done_mb} MB"
+
+    def notify(self, force=False):
+        """Send a model_download event, rate-limited to _min_interval_s."""
+        now = time.monotonic()
+        if not force and now - self._last_emit < self._min_interval:
+            return
+        self._last_emit = now
+        try:
+            self._emit("model_download", {"text": self.message(),
+                                          "pct": self.pct(),
+                                          "done_bytes": self.tally()[0]})
+        except Exception:
+            pass  # a display hiccup must never kill the download
+
+    def reset(self):
+        self._bars.clear()
+        self._last_emit = 0.0
+
+
+def _safe_tqdm_base():
+    """tqdm if available, else a minimal stand-in (download needs it either way)."""
+    try:
+        from tqdm import tqdm as _tqdm
+        return _tqdm
+    except Exception:
+        class _Minimal:
+            def __init__(self, *args, **kwargs):
+                self.n = 0
+                self.total = kwargs.get("total", 0) or 0
+
+            def update(self, n=1):
+                self.n += n
+
+            def close(self):
+                pass
+        return _Minimal
+
+
+class HfHubTqdm(_safe_tqdm_base()):
+    """tqdm subclass that forwards every update to ModelDownloadTracker.
+
+    huggingface_hub accepts `tqdm_class` on snapshot_download; the class
+    callback keeps this decoupled from hf internals (no private APIs).
+    """
+
+    _tracker = None  # type: ignore
+
+    def update(self, n=1):
+        super().update(n)
+        if HfHubTqdm._tracker is not None:
+            try:
+                HfHubTqdm._tracker.update(self)
+            except Exception:
+                pass
+
+
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(CONFIG_PATH):
@@ -377,6 +494,29 @@ def _edit_class_of(hwnd):
     except Exception:
         return ""
     return (buf.value or "").lower()
+
+
+# Window classes that can hold text but must never receive a paste: the
+# taskbar/desktop/Start-shell chrome that Windows puts in the foreground
+# while the user is merely navigating, not typing.
+_SYSTEM_WINDOW_CLASSES = frozenset({
+    "shell_traywnd",            # taskbar
+    "shell_secondarytraywnd",   # secondary taskbars
+    "progman", "workerw",       # desktop roots
+    "xamlexplorerhostislandwindow",   # Win11 Start host
+    "windows.ui.core.corewindow",     # UWP shell surfaces (search overlay, IME host)
+    "multitaskingviewwindow",   # Task View
+})
+
+
+def _is_system_surface(hwnd):
+    """True for desktop-shell windows that must never become a paste target."""
+    if not hwnd:
+        return False
+    try:
+        return _edit_class_of(hwnd) in _SYSTEM_WINDOW_CLASSES
+    except Exception:
+        return False
 
 
 def _insert_text_at_caret(hwnd, text):
@@ -646,11 +786,42 @@ class FlowMini:
         while True:
             try:
                 fg = get_foreground_hwnd()
-                if fg and fg != self.own_hwnd:
+                if (fg and fg != self.own_hwnd
+                        and not _is_system_surface(fg)):
                     self.last_external_hwnd = fg
             except Exception:
                 pass
             time.sleep(interval)
+
+    def _resolve_paste_target(self):
+        """Choose where this utterance lands, freshest focus first.
+
+        Priority:
+          1. the window that is foreground *right now* (external, not a
+             shell surface) — what the user is looking at this second;
+             in hands-free VAD mode this is very often somewhere else
+             than at dictation start
+          2. the target captured at dictation start, if still alive
+          3. the poller's last known external foreground window (fetched
+             also for the hazy case of our own window holding focus)
+
+        Returns an HWND or None (text stays on the clipboard instead of
+        being pasted into nothing/wrong shell surfaces).
+        """
+        fg = get_foreground_hwnd()
+        if fg and fg != self.own_hwnd and not _is_system_surface(fg):
+            self.target_hwnd = fg
+            self.last_external_hwnd = fg
+            return fg
+        capture = getattr(self, "target_hwnd", None)
+        if capture and _user32.IsWindow(capture) and not _is_system_surface(capture):
+            return capture
+        polled = getattr(self, "last_external_hwnd", None)
+        if (polled and _user32.IsWindow(polled)
+                and not _is_system_surface(polled)):
+            self.target_hwnd = polled
+            return polled
+        return None
 
     def _capture_target(self):
         """Pick the paste target: the window the user was actually typing in.
@@ -1066,9 +1237,13 @@ class FlowMini:
             return None
         try:
             model_source = self._whisper_local_path()
+            prefetch_ok = False
             if model_source is None:
                 models_root = os.path.join(BASE_DIR, "models")
                 os.makedirs(models_root, exist_ok=True)
+                # Pre-fetch with a reporting progress bar; if anything about
+                # that path fails, faster-whisper's own download still runs.
+                prefetch_ok = self._prefetch_model(models_root)
             else:
                 models_root = None  # already local, no download_root needed
             self._emit("whisper_loading")
@@ -1079,6 +1254,10 @@ class FlowMini:
             kwargs = {"device": device, "compute_type": compute}
             if models_root is not None:
                 kwargs["download_root"] = models_root
+                if prefetch_ok:
+                    # The complete snapshot is already in the cache; skip
+                    # hf's metadata round-trip (and any re-download).
+                    kwargs["local_files_only"] = True
             self._whisper = WhisperModel(model_source or self.stt_model, **kwargs)
             print(f"[FlowMini] Whisper ready in {time.monotonic() - t0:.0f}s "
                   f"({device}/{compute}, beam={self.stt_beam_size}, "
@@ -1089,6 +1268,61 @@ class FlowMini:
             return None
         finally:
             self._whisper_loading = False
+
+    # Patterns faster-whisper itself passes to snapshot_download; mirrored
+    # here so our pre-download lands in exactly the cache layout the loader
+    # then reads with local_files_only=True (zero extra network round-trip).
+    _FW_SNAPSHOT_PATTERNS = [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+
+    def _prefetch_model(self, models_root):
+        """Download the CT2 model snapshot with live progress reporting.
+
+        faster-whisper downloads with its tqdm bars disabled, so a first
+        run shows nothing for many minutes. This replicates faster-
+        whisper's own huggingface_hub call (same allow_patterns and
+        cache_dir) with a progress-reporting tqdm_class instead, emitting
+        `model_download` events for the HUD.
+
+        Never raises: on any failure it prints and returns False so the
+        caller falls back to faster-whisper's default (progress-less)
+        download path.
+        """
+        try:
+            import huggingface_hub
+            from faster_whisper.utils import _MODELS
+            repo_id = _MODELS.get(self.stt_model)
+            if not repo_id:
+                # Non-standard model id - let faster-whisper handle the load.
+                return False
+            tracker = getattr(self, "_model_tracker", None)
+            if tracker is None:
+                tracker = ModelDownloadTracker(self._emit)
+                self._model_tracker = tracker
+            tracker.reset()
+            HfHubTqdm._tracker = tracker
+            try:
+                tracker.notify(force=True)
+                huggingface_hub.snapshot_download(
+                    repo_id,
+                    allow_patterns=self._FW_SNAPSHOT_PATTERNS,
+                    cache_dir=models_root,
+                    tqdm_class=HfHubTqdm,
+                )
+                tracker.notify(force=True)
+                print(f"[FlowMini] Model download finished: {tracker.message()}")
+                return True
+            finally:
+                HfHubTqdm._tracker = None
+        except Exception as exc:
+            print(f"[FlowMini] Progress-tracked download unavailable ({exc}); "
+                  "falling back to the default download")
+            return False
 
     def _transcribe_kwargs(self):
         """Decode parameters for one utterance.
@@ -1347,7 +1581,15 @@ class FlowMini:
         if not text:
             return
         print(f"[FlowMini] Injecting text: '{text}'")
-        target = getattr(self, "target_hwnd", None)
+        target = self._resolve_paste_target()
+        if not target:
+            print("[FlowMini] No valid paste target found — text is on the clipboard")
+            try:
+                set_clipboard_unicode(text)
+            except Exception:
+                pass
+            self._emit("paste_failed", {"reason": "no_target"})
+            return
         focused = force_foreground(target) if target else False
         if target and not focused:
             print("[FlowMini] Could not restore the target window's focus")
@@ -1362,6 +1604,10 @@ class FlowMini:
                 set_clipboard_unicode(text)
                 time.sleep(0.12)
             if focused:
+                # Let a freshly focused app finish re-marshalling its input
+                # state before the paste chord (Chromium/Electron windows can
+                # swallow keys that arrive a millisecond after the switch).
+                time.sleep(0.12)
                 send_ctrl_v()
                 time.sleep(0.05)
                 print("[FlowMini] Successfully pasted into active application!")

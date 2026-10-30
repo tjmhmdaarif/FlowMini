@@ -1064,6 +1064,8 @@ class FlowMiniApp:
             self._hud_show("processing", "transcribing…")
         elif event == "whisper_loading":
             self._hud_show("loading", "first run downloads the model once (~1.5 GB)")
+        elif event == "model_download":
+            self._hud_show("loading", (data or {}).get("text") or "downloading model…")
         elif event == "asr_text" and self.hud:
             self.hud.set_text((data.get("raw") or "") if data else "")
         elif event == "pasted":
@@ -1089,6 +1091,9 @@ class FlowMiniApp:
         elif event == "whisper_loading":
             self.set_status("loading")
             self._set_transcript("", "", placeholder="Loading Whisper engine (first run downloads the model)…")
+        elif event == "model_download":
+            self.set_status("loading")
+            self._set_transcript("", "", placeholder=(data or {}).get("text") or "Downloading model…")
         elif event == "stage":
             if data:
                 name = data.get("stage", "ASR")
@@ -1349,6 +1354,9 @@ def _acquire_single_instance_mutex(name=_SINGLE_INSTANCE_MUTEX_NAME):
     """
     global _g_single_instance_handle
     if sys.platform != "win32":
+        return None
+    if os.environ.get("FLOWMINI_MULTI") == "1":
+        # Explicit opt-out for automated tests / multiple dev copies.
         return None
     try:
         k32 = _kernel32_lib()

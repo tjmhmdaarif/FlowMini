@@ -35,6 +35,18 @@ def main():
     finally:
         sys.platform = real_platform
 
+    # T1b: FLOWMINI_MULTI=1 env bypasses the guard entirely
+    saved = os.environ.get("FLOWMINI_MULTI")
+    try:
+        os.environ["FLOWMINI_MULTI"] = "1"
+        check("env bypass returns None",
+              flowmini_app._acquire_single_instance_mutex("FlowMini_Test_T1b") is None)
+    finally:
+        if saved is None:
+            os.environ.pop("FLOWMINI_MULTI", None)
+        else:
+            os.environ["FLOWMINI_MULTI"] = saved
+
     # T2: fresh unique name yields a real OS handle
     tname = f"FlowMini_Test_Mutex_{os.getpid()}"
     h = flowmini_app._acquire_single_instance_mutex(tname)

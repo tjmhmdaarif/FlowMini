@@ -143,7 +143,7 @@ defaults are baked in. Highlights:
 One focused improvement per day:
 
 - [x] **Day 1** — floating dictation HUD (status + mic level + text near the cursor)
-- [ ] Day 2 — first-run model download progress bar
+- [x] **Day 2** — first-run model download progress (live % and MB in the HUD + main window, resume-safe)
 - [ ] Day 3 — per-app profiles (code mode in editors, formal style in mail)
 - [ ] Day 4 — auto-start with Windows + tray quick-menu
 - [ ] Day 5 — CI: the EXE builds automatically on every tag
@@ -154,6 +154,12 @@ One focused improvement per day:
 
 - **Session telemetry** — every dictation (duration, word count, end-to-end latency)
   is logged to a local SQLite file (`flowmini_sessions.db`). Query it with `--stats`.
+- **Model download progress** — picking a Whisper model shows live percentage and
+  MB counters while it downloads; already-downloaded models load with zero extra
+  network round-trips.
+- **Paste follows your focus** — the target window is re-checked at paste time, so
+  moving between apps while dictating lands the text where you actually are
+  (taskbar/desktop/Start-shell never receive text by accident).
 - **Auto-learn** — repeated manual corrections are learned and applied automatically next time.
 - **Microphone recovery** — the audio stream re-opens itself on device errors.
 - **Graceful degradation** — missing API key or unreachable polisher never breaks dictation;
@@ -170,11 +176,12 @@ pip install pyinstaller
 ## 🧪 Tests
 
 ```powershell
-pytest tests_speech_transform.py tests_translit.py
+pytest tests_speech_transform.py tests_translit.py tests_single_instance.py tests_model_progress.py
 ```
 
-The cleanup-engine and romanization tests are pure functions — they run offline with
-no microphone and no API key.
+All four suites are orchestration-safe: they run offline (no microphone, no API key,
+no Ollama), and the single-instance guard has a `FLOWMINI_MULTI=1` bypass so test
+harnesses can run multiple copies without touching your real config.
 
 ## 📁 Project layout
 

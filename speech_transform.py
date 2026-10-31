@@ -464,7 +464,7 @@ def join_tokens(tokens: List[Token]) -> str:
 DICTATION_VERBS: set = {"type", "write", "say"}
 
 
-def finish_light(text: str) -> str:
+def finish_light(text: str, developer_mode: bool = False) -> str:
     """Normalize spacing, capitalize the sentence start, ensure terminal punctuation.
 
     - A trailing comma becomes a period (dictated sentence shouldn't end on one).
@@ -472,9 +472,14 @@ def finish_light(text: str) -> str:
       (so "[x]" and "Where are you?" are not double-terminated).
     - Sentences that start with a dictation verb ("type", "write", "say") are
       kept lowercase, matching literal/dictation phrasing like "type [x]".
+    - ``developer_mode`` (code editor / Day-3 `code` profile): only the spacing
+      normalize runs — identifiers like ``import os`` must not become
+      "Import os." and dictated lists must keep their trailing comma.
     """
     text = re.sub(r"[ \t]+", " ", text).strip()
     if not text:
+        return text
+    if developer_mode:
         return text
     if text.endswith(","):
         text = text[:-1] + "."
@@ -498,10 +503,16 @@ def transform_transcript(
     asr_language: Optional[str] = None,
     asr_confidence: float = 0.0,
     cleanup_mode: str = "light",                   # off | light | medium
+    developer_mode: bool = False,                   # code-safe: no auto case/punctuation
     user_dictionary: Optional[dict] = None,        # {"commandAliases": {...}}
     medium_rewriter: Optional[Callable[[str], str]] = None,
 ) -> TransformResult:
-    """Run the full pipeline. Pure function; never mutates the input."""
+    """Run the full pipeline. Pure function; never mutates the input.
+
+    ``developer_mode`` keeps output code-safe for editors: fillers, commands
+    and corrections still run, but the finishing pass never sentence-caps or
+    appends terminal punctuation (Day-3 per-app `code` profile).
+    """
     transcript = transcript or ""
     mode = (cleanup_mode or "light").lower()
     result = TransformResult(rawTranscript=transcript, finalText=transcript,
@@ -553,10 +564,10 @@ def transform_transcript(
         tokens, fill_edits = apply_fillers(tokens, fillers, lang)
         result.edits.extend(fill_edits)
 
-    # 7. punctuation & capitalization (light)
+    # 7. punctuation & capitalization (light; code-safe in developer mode)
     final = join_tokens(tokens)
     if final.strip():
-        final = finish_light(final)
+        final = finish_light(final, developer_mode=developer_mode)
     result.finalText = final
 
     # 8. medium: optional rewrite (kept separate & optional; keeps meaning)
@@ -583,6 +594,7 @@ def transform_request(request: dict,
         asr_language=request.get("asrLanguage"),
         asr_confidence=request.get("asrConfidence", 0.0),
         cleanup_mode=request.get("cleanupMode", "light"),
+        developer_mode=bool(request.get("developerMode", False)),
         user_dictionary=request.get("userDictionary"),
         medium_rewriter=medium_rewriter,
     )

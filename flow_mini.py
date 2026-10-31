@@ -36,6 +36,7 @@ import time
 import json
 import re
 import sqlite3
+from fnmatch import fnmatch
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from speech_transform import transform_transcript
@@ -85,6 +86,8 @@ DEFAULT_CONFIG = {
                                   # fast = lowest latency (beam 1, current behaviour)
     "auto_learn": True,           # learn from corrections and apply frequent ones
     "developer_mode": False,      # code-aware vocabulary and formatting
+    "app_profiles_enabled": True, # Day 3: switch settings per focused app (see
+                                  # DEFAULT_APP_PROFILES; override with app_profiles)
     "show_hud": True,             # floating mic HUD near the cursor while dictating
     "detect_language": True,      # let Whisper auto-detect the spoken language per utterance
     "translate_to_english": False,  # transcribe and translate everything into English
@@ -673,8 +676,193 @@ Your job is to transform raw spoken transcript into clean, polished, written tex
 7. If a style preset is specified, apply its rules: capitalize={capitalize}, punctuation={punctuation}, contractions={contractions}, tone={tone}.
 """
 
+#: Appended to the system prompt while the code/developer profile is active
+#: (only used by cleanup_mode "medium", which is the path that calls the LLM).
+DEVELOPER_SYSTEM_ADDENDUM = """
+8. The dictation targets a code editor: keep identifiers, file paths, shell
+   commands and symbols exactly as spoken — never rename or reorder code-like
+   tokens, and do NOT add sentence capitalization or a trailing period to text
+   that reads like code.
+"""
+
 # Silero VAD parameters for the bundled faster-whisper voice-isolation filter.
 VAD_PARAMS = {"min_silence_duration_ms": 400, "speech_pad_ms": 200}
+
+
+# ---------------------------------------------------------------------------
+# Per-app profiles (Day 3)
+# ---------------------------------------------------------------------------
+# A profile is a rule that fires when the window you are dictating into matches
+# its process-name and/or window-title patterns (case-insensitive fnmatch, `*`
+# wildcards; EITHER list matching is enough). The FIRST matching rule wins and
+# may override only these settings for that dictation:
+#
+#   developer_mode | style_preset | cleanup_mode
+#
+# Your global config values are never mutated — a profile only wins while it is
+# the active one, so switching apps switches the behaviour back automatically.
+# The profile is chosen when a dictation STARTS (the window you are focused on),
+# so one utterance always uses one consistent profile.
+
+PROFILE_OVERRIDE_KEYS = ("developer_mode", "style_preset", "cleanup_mode")
+PROFILE_CLEANUP_MODES = ("off", "light", "medium")
+
+#: Built-in rules used when config.json has no `app_profiles` key.
+#: `code` turns on developer mode in editors/terminals (no auto-capital or
+#: trailing period mangling identifiers); `mail` uses the formal style preset.
+DEFAULT_APP_PROFILES = [
+    {
+        "name": "code",
+        "apps": ["code.exe", "code - insiders.exe", "cursor.exe", "windsurf.exe",
+                 "devenv.exe", "pycharm64.exe", "idea64.exe", "webstorm64.exe",
+                 "sublime_text.exe", "notepad++.exe", "vim.exe", "gvim.exe",
+                 "nvim.exe", "windowsterminal.exe", "wezterm-gui.exe",
+                 "alacritty.exe", "zed.exe", "emacs.exe"],
+        "title": [],
+        "overrides": {"developer_mode": True},
+    },
+    {
+        "name": "mail",
+        "apps": ["outlook.exe", "olk.exe", "hxoutlook.exe", "mailapp.exe",
+                 "thunderbird.exe"],
+        "title": [],
+        "overrides": {"style_preset": "formal"},
+    },
+]
+
+
+def normalize_profiles(raw):
+    """Validate a raw `app_profiles` list from config into clean rules.
+
+    None -> the built-in defaults; [] -> explicitly no profiles. Bad entries
+    (not an object, missing name, no patterns, nothing overridable) are skipped
+    with a log line instead of raising — a hand-edited config.json must never
+    break dictation. Returns a list of
+    ``{"name", "apps", "title", "overrides"}`` dicts.
+    """
+    if raw is None:
+        return [dict(p, apps=list(p["apps"]), title=list(p["title"]),
+                     overrides=dict(p["overrides"])) for p in DEFAULT_APP_PROFILES]
+    if not isinstance(raw, list):
+        print("[FlowMini] app_profiles must be a list — using built-in profiles")
+        return [dict(p, apps=list(p["apps"]), title=list(p["title"]),
+                     overrides=dict(p["overrides"])) for p in DEFAULT_APP_PROFILES]
+
+    def _patterns(value):
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [str(p).strip().lower() for p in value if str(p).strip()]
+
+    clean = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            print("[FlowMini] Skipping app_profiles entry that is not an object")
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            print("[FlowMini] Skipping app_profiles entry without a name")
+            continue
+        apps = _patterns(entry.get("apps"))
+        titles = _patterns(entry.get("title"))
+        if not apps and not titles:
+            print(f"[FlowMini] Profile '{name}' has no apps/title patterns — skipped")
+            continue
+        overrides = {}
+        for key in PROFILE_OVERRIDE_KEYS:
+            if key not in entry:
+                continue
+            val = entry[key]
+            if key == "developer_mode":
+                overrides[key] = bool(val)
+            elif key == "style_preset":
+                val = str(val).lower()
+                overrides[key] = val if val in STYLE_PRESETS else "casual"
+            else:  # cleanup_mode
+                val = str(val).lower()
+                overrides[key] = val if val in PROFILE_CLEANUP_MODES else "light"
+        if not overrides:
+            print(f"[FlowMini] Profile '{name}' overrides nothing — skipped")
+            continue
+        clean.append({"name": name, "apps": apps, "title": titles,
+                      "overrides": overrides})
+    return clean
+
+
+# --- window identity (pure Win32, no new dependencies) -----------------------
+_user32.GetWindowTextW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int]
+_user32.GetWindowTextW.restype = ctypes.c_int
+_kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_kernel32.OpenProcess.restype = ctypes.c_void_p
+_kernel32.QueryFullProcessImageNameW.argtypes = [
+    ctypes.c_void_p, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+_kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+_kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def get_window_process_name(hwnd):
+    """Lowercase executable file name owning ``hwnd`` (e.g. ``code.exe``).
+
+    Returns None when Windows refuses the query (protected/system windows) or
+    the handle is invalid — callers treat that as "no process signal".
+    """
+    if not hwnd:
+        return None
+    try:
+        pid = wintypes.DWORD(0)
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return None
+        hproc = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                       False, pid.value)
+        if not hproc:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buf))
+            if _kernel32.QueryFullProcessImageNameW(hproc, 0, buf,
+                                                    ctypes.byref(size)):
+                path = (buf.value or "").replace("/", "\\")
+                return os.path.basename(path).lower() or None
+        finally:
+            _kernel32.CloseHandle(hproc)
+    except Exception:
+        return None
+    return None
+
+
+def get_window_title(hwnd):
+    """Caption text of ``hwnd`` ('' when unavailable). Best effort."""
+    if not hwnd:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        n = _user32.GetWindowTextW(hwnd, buf, len(buf))
+        return (buf.value or "") if n else ""
+    except Exception:
+        return ""
+
+
+def select_profile(process_name, window_title, profiles):
+    """First profile rule matching this window, else None.
+
+    Case-insensitive fnmatch (`*` wildcards) against the executable name and/or
+    the window title; a rule fires when EITHER of its pattern lists hits. Order
+    matters — earlier rules win.
+    """
+    proc = (process_name or "").strip().lower()
+    title = (window_title or "").strip().lower()
+    for profile in profiles or ():
+        apps = profile.get("apps") or []
+        titles = profile.get("title") or []
+        if proc and any(fnmatch(proc, pat) for pat in apps):
+            return profile
+        if title and any(fnmatch(title, pat) for pat in titles):
+            return profile
+    return None
 
 
 class FlowMini:
@@ -711,6 +899,12 @@ class FlowMini:
         self.auto_learner = AutoLearner(os.path.join(BASE_DIR, "auto_learn_corrections.json"))
         self.auto_learn_enabled = bool(config.get("auto_learn", True))
         self.developer_mode = bool(config.get("developer_mode", False))
+
+        # Per-app profiles (Day 3): matched against the focused window when a
+        # dictation starts; overrides are read through _effective() per use.
+        self.app_profiles_enabled = bool(config.get("app_profiles_enabled", True))
+        self.profiles = normalize_profiles(config.get("app_profiles"))
+        self.active_profile = None  # {"name", "app", "overrides"} while matched
 
         # Speech-to-text engine: local Whisper (offline, fast) preferred.
         # Google's free web ASR is blocked on many networks → always fall back.
@@ -837,7 +1031,56 @@ class FlowMini:
         elif self.last_external_hwnd and _user32.IsWindow(self.last_external_hwnd):
             self.target_hwnd = self.last_external_hwnd
             print("[FlowMini] Focus is on FlowMini — pasting into the last external app")
+        # Day 3: the profile follows the window the user chose for this
+        # dictation (same hwnd the paste will land in).
+        self.resolve_profile(self.target_hwnd)
         return self.target_hwnd
+
+    # -- per-app profiles -----------------------------------------------------
+    def set_profiles_enabled(self, on):
+        """Turn per-app profiles on/off (GUI toggle); re-resolves immediately."""
+        self.app_profiles_enabled = bool(on)
+        self.resolve_profile(self.target_hwnd)
+
+    def resolve_profile(self, hwnd=None):
+        """Pick the profile for ``hwnd`` (default: the current paste target).
+
+        Called when a dictation starts so one utterance always uses one
+        consistent profile. Emits a ``profile`` event whenever the active
+        profile changes — including when it drops back to the default.
+        """
+        if not self.app_profiles_enabled:
+            return self._apply_active_profile(None, "")
+        if hwnd is None:
+            hwnd = self.target_hwnd
+        if not hwnd or not _user32.IsWindow(hwnd):
+            return self._apply_active_profile(None, "")
+        proc = get_window_process_name(hwnd) or ""
+        match = select_profile(proc, get_window_title(hwnd), self.profiles)
+        state = ({"name": match["name"], "app": proc,
+                  "overrides": dict(match["overrides"])} if match else None)
+        return self._apply_active_profile(state, proc)
+
+    def _apply_active_profile(self, state, proc):
+        """Store the resolved profile and notify the UI when its name changes."""
+        old_name = (self.active_profile or {}).get("name")
+        new_name = (state or {}).get("name")
+        if old_name != new_name:
+            self.active_profile = state
+            print(f"[FlowMini] Profile: {new_name or 'default'}"
+                  + (f" · {proc}" if proc else ""))
+            self._emit("profile", {"name": new_name, "app": proc,
+                                   "overrides": (state or {}).get("overrides") or {}})
+        elif state is not None:
+            self.active_profile = state  # same profile, fresher app name
+        return self.active_profile
+
+    def _effective(self, key):
+        """Setting for this dictation: active profile override, else global."""
+        overrides = (self.active_profile or {}).get("overrides") or {}
+        if key in overrides:
+            return overrides[key]
+        return getattr(self, key)
 
     def start_recording(self):
         with self.lock:
@@ -926,6 +1169,9 @@ class FlowMini:
                 self._speech_seen = True
                 self._started_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._vad_started_mono = now
+                # Re-pick target + app profile for THIS utterance: hands-free
+                # users switch windows between sentences.
+                self._capture_target()
                 self._emit("recording_started")
             self._silence_start = None
             self._vad_buf.append(chunk)
@@ -1022,6 +1268,11 @@ class FlowMini:
         # PARALLEL with the cleanup pipeline. The Speech Transform Engine is a
         # deterministic pass (a few ms); only cleanup_mode "medium" waits on
         # the LLM polisher, and even then it overlaps the English pass.
+        # Day 3: settings resolve through the active app profile for this
+        # utterance; snapshot them here so one dictation stays consistent even
+        # if the user switches windows while it processes.
+        profile = self.active_profile
+        cleanup = self._effective("cleanup_mode")
         english_text = None
         t_p = time.monotonic()
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -1032,12 +1283,12 @@ class FlowMini:
                 base = english_text or pre
             else:
                 base = pre  # transform the original-language text immediately
-            if self.cleanup_mode == "medium":
+            if cleanup == "medium":
                 # light cleanup + optional AI rewrite (runs on worker 2)
                 tres = pool.submit(self._transform, base, detected, conf,
-                                   self.polish_text).result()
+                                   self.polish_text, cleanup).result()
             else:
-                tres = self._transform(base, detected, conf)
+                tres = self._transform(base, detected, conf, cleanup_mode=cleanup)
             if not self.translate_english:
                 english_text = fut_en.result()
         final_text = tres.finalText
@@ -1050,7 +1301,7 @@ class FlowMini:
                 final_text = learned
 
         self._emit("stage", {"stage": "Cleanup", "seconds": time.monotonic() - t_p,
-                             "cleanup": self.cleanup_mode,
+                             "cleanup": cleanup,
                              "decision": tres.languageDecision})
         print(f"[FlowMini] Final Text: \"{final_text}\"")
         if tres.edits:
@@ -1077,7 +1328,8 @@ class FlowMini:
                               "raw": pre, "polished": final_text,
                               "lang": detected, "lang_conf": conf,
                               "english": english_text,
-                              "cleanup": self.cleanup_mode,
+                              "cleanup": cleanup,
+                              "profile": (profile or {}).get("name"),
                               "lang_decision": tres.languageDecision,
                               "edits": [
                                   {"type": e.type, "source": e.sourceText,
@@ -1085,13 +1337,18 @@ class FlowMini:
                                   for e in tres.edits
                               ]})
 
-    def _transform(self, text, detected, conf, rewriter=None):
+    def _transform(self, text, detected, conf, rewriter=None, cleanup_mode=None):
         """Run the deterministic Speech Transform Engine.
 
         Uses Whisper's language detection (language + confidence) to pick the
         transformation rules; a manual language selection becomes the hint.
         Only languages with rule tables get transformed — everything else is
-        preserved verbatim (never translated)."""
+        preserved verbatim (never translated).
+
+        ``cleanup_mode`` defaults to the profile-aware effective value; the
+        developer-mode flag (also profile-aware) makes the output code-safe:
+        no sentence capitalization and no forced terminal punctuation.
+        """
         hint = None if self.detect_language else self.language
         own_base = (self.language or "en-US").split("-")[0].lower()
         enabled = [own_base, "en"]
@@ -1102,7 +1359,8 @@ class FlowMini:
                 enabled_languages=enabled,
                 asr_language=detected,
                 asr_confidence=float(conf or 0.0),
-                cleanup_mode=self.cleanup_mode,
+                cleanup_mode=cleanup_mode or self._effective("cleanup_mode"),
+                developer_mode=bool(self._effective("developer_mode")),
                 medium_rewriter=rewriter,
             )
         except Exception as exc:
@@ -1512,8 +1770,9 @@ class FlowMini:
         return self._last_detected_lang or self.language or "the speaker's language"
 
     def _style_prompt(self):
-        """Get the style-specific prompt parameters."""
-        style = STYLE_PRESETS.get(self.style_preset, STYLE_PRESETS["casual"])
+        """Get the style parameters — profile-aware (e.g. formal in mail)."""
+        style = STYLE_PRESETS.get(self._effective("style_preset"),
+                                  STYLE_PRESETS["casual"])
         return style
 
     def polish_text(self, raw_text):
@@ -1535,6 +1794,8 @@ class FlowMini:
             contractions="yes" if style.get("contractions") else "no",
             tone=style.get("tone", "natural"),
         )
+        if bool(self._effective("developer_mode")):
+            system_prompt += DEVELOPER_SYSTEM_ADDENDUM
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -1558,7 +1819,7 @@ class FlowMini:
             resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=6)
             if resp.status_code == 200:
                 polished = resp.json()["choices"][0]["message"]["content"].strip()
-                print(f"[FlowMini] Polish latency: {(time.monotonic() - t0) * 1000:.0f} ms (style: {self.style_preset})")
+                print(f"[FlowMini] Polish latency: {(time.monotonic() - t0) * 1000:.0f} ms (style: {self._effective('style_preset')})")
                 return polished
             print(f"[FlowMini] Polish API returned {resp.status_code}: {resp.text}")
             return raw_text

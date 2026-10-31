@@ -667,6 +667,14 @@ class FlowMiniApp:
         self.dev_toggle = ToggleSwitch(dev_row, command=self._on_developer_toggle)
         self.dev_toggle.pack(side="left", padx=(10, 0))
 
+        # --- per-app profiles (Day 3) ---
+        prof_row = tk.Frame(lang_col, bg=BG)
+        prof_row.pack(anchor="e", pady=(8, 0))
+        tk.Label(prof_row, text="Per-app profiles", font=("Segoe UI", 9),
+                 bg=BG, fg=TEXT_MUTED).pack(side="left")
+        self.profiles_toggle = ToggleSwitch(prof_row, command=self._on_profiles_toggle)
+        self.profiles_toggle.pack(side="left", padx=(10, 0))
+
         # --- transcription card ---
         card = tk.Frame(self.root, bg=BG_CARD, highlightthickness=1,
                        highlightbackground=BORDER)
@@ -861,6 +869,12 @@ class FlowMiniApp:
                 self.dev_toggle.set_state(bool(getattr(self.core, "developer_mode", False)))
             except Exception:
                 pass
+        if hasattr(self, "profiles_toggle"):
+            try:
+                self.profiles_toggle.set_state(
+                    bool(getattr(self.core, "app_profiles_enabled", True)))
+            except Exception:
+                pass
         # Build specs, then let _HotkeyWindow register + pump them on one thread.
         self.hotkey_ids = {}
         self._register_count = 0
@@ -993,6 +1007,20 @@ class FlowMiniApp:
         self.log(f"Developer mode: {mode}", "ok")
         self._save_config_safe()
 
+    def _on_profiles_toggle(self, on):
+        """Day 3: per-app profiles — each app picks its own mode automatically."""
+        if not self.core:
+            return
+        self.core.set_profiles_enabled(bool(on))
+        self.config["app_profiles_enabled"] = bool(on)
+        if on:
+            n = len(getattr(self.core, "profiles", []) or [])
+            self.log(f"Per-app profiles: ON — {n} rule(s) active "
+                     "(editors → developer, mail → formal)", "ok")
+        else:
+            self.log("Per-app profiles: OFF — your global settings apply everywhere", "ok")
+        self._save_config_safe()
+
     def _undo_paste(self):
         """One-step undo: paste the raw transcript that was just cleaned."""
         if not self.core:
@@ -1056,10 +1084,18 @@ class FlowMiniApp:
         if self.hud:
             self.hud.hide()
 
+    def _hud_profile_chip(self):
+        """The active per-app profile name for the HUD sub-line ('' = default)."""
+        try:
+            return ((getattr(self.core, "active_profile", None) or {}).get("name")
+                    or "")
+        except Exception:
+            return ""
+
     def _hud_sync(self, event, data):
         """Mirror the core's state machine onto the floating HUD."""
         if event == "recording_started":
-            self._hud_show("recording", "")
+            self._hud_show("recording", self._hud_profile_chip())
         elif event == "recording_stopped":
             self._hud_show("processing", "transcribing…")
         elif event == "whisper_loading":
@@ -1106,6 +1142,8 @@ class FlowMiniApp:
         elif event == "busy":
             self.hint_label.config(text="Still processing — wait a moment…")
             self.log("Still processing previous dictation — press again in a moment", "dim")
+        elif event == "profile":
+            self._handle_profile_event(data)
         elif event == "asr_text":
             # Raw transcript is ready (~1s) — show it instantly so the UI never
             # feels frozen while cleaning finishes in the background.
@@ -1135,6 +1173,8 @@ class FlowMiniApp:
                         {"spoken_command": "symbol", "filler_removed": "filler",
                          "correction": "correction", "formatting": "rewrite"}
                         .get(e.get("type"), e.get("type", "edit")) for e in edits)
+                if data.get("profile"):
+                    extra += f" ·profile {data['profile']}"
                 self.log(f"Pasted — {data['words']} words, {data['latency_ms']} ms "
                          f"({data['mode']}) ·cleanup {c}{extra}", "ok")
             # one-step undo: remember the raw version in case the user needs it
@@ -1151,6 +1191,30 @@ class FlowMiniApp:
             self.set_status("idle")
             self.toggle.set_state(False)
             self.log("VAD OFF", "dim")
+
+    def _handle_profile_event(self, data):
+        """Day 3: log when a per-app profile activates or drops back to default."""
+        data = data or {}
+        name = data.get("name")
+        enabled = bool(getattr(self.core, "app_profiles_enabled", True))
+        if not name:
+            # Turning profiles off already logs its own line — don't double it.
+            if enabled:
+                self.log("Profile: default — your global settings apply here", "dim")
+            return
+        bits = []
+        overrides = data.get("overrides") or {}
+        if "developer_mode" in overrides:
+            bits.append("developer mode " + ("on" if overrides["developer_mode"] else "off"))
+        if "style_preset" in overrides:
+            bits.append(f"style {overrides['style_preset']}")
+        if "cleanup_mode" in overrides:
+            bits.append(f"cleanup {overrides['cleanup_mode']}")
+        app = data.get("app") or ""
+        msg = f"Profile '{name}'" + (f" · {app}" if app else "")
+        if bits:
+            msg += " · " + ", ".join(bits)
+        self.log(msg, "dim")
 
     def _set_transcript(self, raw, polished, english=None, placeholder=None):
         text = polished or raw or placeholder or "—"

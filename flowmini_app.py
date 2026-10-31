@@ -220,20 +220,109 @@ class _HotkeyWindow:
 
 
 # ===========================================================================
-# Design system
+# Design system — "refined crimson" (front-end reframe)
+# One tinted cool-dark surface family, ONE standing accent (crimson) reserved
+# for live/active meaning, a unified cool-gray text ramp, and a real type
+# scale using Segoe UI Semibold/Medium as tkinter's missing 500/600 weights.
+# Spacing grid: 4 / 8 / 12 / 16 / 22.
 # ===========================================================================
-BG = "#0c0c12"
-BG_CARD = "#14141c"
-BG_CARD_HOVER = "#1a1a24"
-ACCENT = "#e63946"
-ACCENT_GLOW = "#ff4d5e"
-TEXT_PRIMARY = "#f0f0f5"
-TEXT_SECONDARY = "#8a8a96"
-TEXT_MUTED = "#5a5a66"
-SUCCESS = "#3ddc84"
-WARNING = "#ffb02e"
-INFO = "#4da3ff"
-BORDER = "#22222e"
+BG = "#0b0d13"             # window background — deep blue-black, never #000
+BG_RAISED = "#12151d"      # cards & panels (waveform, settings, transcript, log)
+BG_HOVER = "#1a1f2a"       # hover / pressed surface
+BORDER = "#232936"         # hairline frames around cards
+BORDER_SOFT = "#1b202b"    # faint divider inside panels
+TRACK_OFF = "#2a2f3d"      # toggle track, off
+KNOB = "#f4f6fb"           # toggle knob
+WAVE_REST = "#39415a"      # waveform at rest — quiet slate, not a shout
+ACCENT = "#e63946"         # crimson — the one standing accent
+ACCENT_GLOW = "#ff5c6b"    # hover + live crimson
+ACCENT_DIM = "#8f2733"     # crimson halo / shadow
+TEXT_PRIMARY = "#eef1f7"   # headings, transcript
+TEXT_SECONDARY = "#9aa3b5" # body, log text, row labels
+TEXT_MUTED = "#626b7e"     # captions, section labels
+SUCCESS = "#3ddc84"        # semantic: enabled / idle / pasted
+WARNING = "#ffb02e"        # semantic: processing
+INFO = "#4da3ff"           # semantic: loading / vad armed
+
+#: Base font tuples. "Segoe UI Semibold"/"Segoe UI Medium" give tkinter the
+#: 500/600 weights it cannot express in a plain ("Segoe UI", n) tuple; when a
+#: family is missing (older Windows) _init_fonts() falls back to bold/regular.
+FONT_BASE = {
+    "display":  ("Segoe UI Semibold", 24),   # the big status word
+    "title":    ("Segoe UI Semibold", 16),   # "FlowMini"
+    "hero":     ("Segoe UI Semibold", 12),   # VAD block title
+    "hud":      ("Segoe UI Semibold", 10),   # HUD status word
+    "section":  ("Segoe UI Semibold", 9),    # uppercase micro-labels
+    "control":  ("Segoe UI Medium", 10),     # settings row labels + combos
+    "body":     ("Segoe UI", 11),
+    "caption":  ("Segoe UI", 9),
+    "mono":     ("Consolas", 9),             # log + stats (tabular figures)
+}
+FONTS = dict(FONT_BASE)  # refined in FlowMiniApp.__init__ via _init_fonts()
+
+#: App version shown in the UI and shipped on GitHub releases.
+APP_VERSION = "1.1.0.2"
+
+
+def _init_fonts():
+    """Resolve the weight-via-family fonts against what this Windows ships."""
+    global FONTS
+    try:
+        families = {f.lower() for f in tkfont.families()}
+    except Exception:
+        families = set()
+    FONTS = dict(FONT_BASE)
+    if "segoe ui semibold" not in families:
+        FONTS["display"] = ("Segoe UI", 24, "bold")
+        FONTS["title"] = ("Segoe UI", 16, "bold")
+        FONTS["hero"] = ("Segoe UI", 12, "bold")
+        FONTS["hud"] = ("Segoe UI", 10, "bold")
+        FONTS["section"] = ("Segoe UI", 9, "bold")
+    if "segoe ui medium" not in families:
+        FONTS["control"] = ("Segoe UI", 10)
+
+
+#: Below this window width the layout stacks in one column; at or above it the
+#: settings panel moves to a right-hand side column (maximized / fullscreen).
+WIDE_BREAKPOINT = 900
+
+#: Floating HUD cards auto-hide after this long without a state update — a
+#: card whose events stop arriving (stuck "STARTING ASR" load) must never
+#: pin itself to the screen forever. Live "recording" cards are exempt.
+HUD_AUTO_HIDE_MS = 10_000
+
+#: Section placement per mode. Every section is a direct child of the root, so
+#: reflow is just grid_forget() + grid() with mode-specific coordinates — no
+#: re-parenting, widget state (toggles, combos) survives untouched.
+_LAYOUT_NARROW = {
+    "header":     dict(row=0, column=0, columnspan=2, sticky="ew", padx=22, pady=(14, 0)),
+    "status":     dict(row=1, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "wave":       dict(row=2, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "record":     dict(row=3, column=0, columnspan=2, pady=(10, 0)),
+    "panel":      dict(row=4, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "transcript": dict(row=5, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "buttons":    dict(row=6, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "stats":      dict(row=7, column=0, columnspan=2, sticky="w", padx=22, pady=(8, 0)),
+    "log":        dict(row=8, column=0, columnspan=2, sticky="nsew", padx=22, pady=(8, 16)),
+    "log_row": 8,
+    "flex_rows": (),          # only the log grows vertically
+    "col1_minsize": 0,
+}
+_LAYOUT_WIDE = {
+    "header":     dict(row=0, column=0, columnspan=2, sticky="ew", padx=22, pady=(14, 0)),
+    "status":     dict(row=1, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    # stage stays in the left column; settings panel becomes a right sidebar
+    "wave":       dict(row=2, column=0, sticky="ew", padx=(22, 12), pady=(10, 0)),
+    "record":     dict(row=3, column=0, pady=(10, 0)),
+    "transcript": dict(row=4, column=0, sticky="nsew", padx=(22, 12), pady=(10, 0)),
+    "panel":      dict(row=2, column=1, rowspan=3, sticky="nsew", padx=(0, 22), pady=(10, 0)),
+    "buttons":    dict(row=5, column=0, columnspan=2, sticky="ew", padx=22, pady=(10, 0)),
+    "stats":      dict(row=6, column=0, columnspan=2, sticky="w", padx=22, pady=(8, 0)),
+    "log":        dict(row=7, column=0, columnspan=2, sticky="nsew", padx=22, pady=(8, 16)),
+    "log_row": 7,
+    "flex_rows": (4, 7),      # transcript + log share extra height
+    "col1_minsize": 360,
+}
 
 
 def lerp_color(c1, c2, t):
@@ -269,8 +358,8 @@ VALID_LANG_CODES = {code for code, _ in LANGUAGES}
 class ToggleSwitch(tk.Canvas):
     """iOS-style animated toggle switch."""
 
-    def __init__(self, parent, command=None, initial=False):
-        super().__init__(parent, width=56, height=32, bg=BG, highlightthickness=0,
+    def __init__(self, parent, command=None, initial=False, bg=None):
+        super().__init__(parent, width=56, height=32, bg=bg or BG, highlightthickness=0,
                          cursor="hand2")
         self.command = command
         self._on = initial
@@ -283,8 +372,8 @@ class ToggleSwitch(tk.Canvas):
     def _draw(self):
         self.delete("all")
         a = self._anim
-        # track
-        track_color = self._lerp_color("#2a2a36", SUCCESS, a)
+        # track: quiet slate when off, semantic green when on
+        track_color = self._lerp_color(TRACK_OFF, SUCCESS, a)
         self.create_oval(2, 2, 30, 30, fill=track_color, width=0)
         self.create_rectangle(1, 1, 31, 31, fill=track_color, width=0)
         self.create_oval(26, 2, 54, 30, fill=track_color, width=0)
@@ -333,7 +422,7 @@ class WaveformCanvas(tk.Canvas):
     """Animated waveform / mic level visualizer."""
 
     def __init__(self, parent, **kw):
-        super().__init__(parent, bg=BG_CARD, highlightthickness=0, **kw)
+        super().__init__(parent, bg=BG_RAISED, highlightthickness=0, **kw)
         self._level = 0
         self._ema = 0
         self._recording = False
@@ -353,11 +442,24 @@ class WaveformCanvas(tk.Canvas):
         h = self.winfo_height() or 60
         self._ema = max(self._ema * 0.82, min(self._level, 1.0))
         self._phase += 0.22 if self._recording else 0.05
-        total_w = self._n_bars * (self._bar_w + self._bar_gap)
+        # Adaptive meter: bar count follows the window width (any snap size),
+        # and wide windows spread the bars instead of clustering in the middle.
+        n = max(16, min(64, w // 10))
+        bar_w = self._bar_w
+        gap = self._bar_gap
+        if w > n * (bar_w + gap) + 160:
+            gap = min(12, max(gap, int((w * 0.72 - n * bar_w) / max(1, n - 1))))
+        total_w = n * (bar_w + gap)
         x0 = (w - total_w) // 2
-        color = ACCENT_GLOW if self._recording else INFO
-        for i in range(self._n_bars):
-            center_offset = abs(i - (self._n_bars - 1) / 2) / ((self._n_bars - 1) / 2)
+        self._n_bars = n
+        # Rest: quiet slate. Recording: ramps WAVE_REST -> crimson with level,
+        # so the accent MEANS "live" instead of decorating an idle screen.
+        if self._recording:
+            color = lerp_color(WAVE_REST, ACCENT_GLOW, min(1.0, 0.35 + self._ema))
+        else:
+            color = lerp_color(WAVE_REST, TEXT_MUTED, min(1.0, self._ema * 0.6))
+        for i in range(n):
+            center_offset = abs(i - (n - 1) / 2) / ((n - 1) / 2)
             envelope = 1.0 - center_offset * 0.65
             if self._recording:
                 wave = (math.sin(self._phase + i * 0.55) + 1) / 2
@@ -365,10 +467,10 @@ class WaveformCanvas(tk.Canvas):
             else:
                 idle = (math.sin(self._phase + i * 0.35) + 1) / 2
                 bar_h = max(4, (self._ema * 0.85 + idle * 0.06) * envelope * (h - 10))
-            x = x0 + i * (self._bar_w + self._bar_gap) + self._bar_w / 2
+            x = x0 + i * (bar_w + gap) + bar_w / 2
             cy = h / 2
             self.create_line(x, cy - bar_h / 2, x, cy + bar_h / 2,
-                             fill=color, width=self._bar_w, capstyle="round")
+                             fill=color, width=bar_w, capstyle="round")
 
 
 # ===========================================================================
@@ -406,24 +508,24 @@ class DictationHud:
         self.win.withdraw()                       # hidden until first dictation
         self.win.overrideredirect(True)
         self.win.configure(bg=BORDER)             # border colour = 1px frame
-        inner = tk.Frame(self.win, bg=BG_CARD)
+        inner = tk.Frame(self.win, bg=BG_RAISED)
         inner.pack(fill="both", expand=True, padx=1, pady=1)
 
-        top = tk.Frame(inner, bg=BG_CARD)
+        top = tk.Frame(inner, bg=BG_RAISED)
         top.pack(fill="x", padx=12, pady=(9, 0))
-        self.dot = tk.Canvas(top, width=10, height=10, bg=BG_CARD,
+        self.dot = tk.Canvas(top, width=10, height=10, bg=BG_RAISED,
                              highlightthickness=0)
         self.dot.create_oval(1, 1, 9, 9, fill=SUCCESS, width=0, tags="dot")
         self.dot.pack(side="left")
-        self.status = tk.Label(top, text="IDLE", font=("Segoe UI", 10, "bold"),
-                               bg=BG_CARD, fg=SUCCESS)
+        self.status = tk.Label(top, text="IDLE", font=FONTS["hud"],
+                               bg=BG_RAISED, fg=SUCCESS)
         self.status.pack(side="left", padx=(8, 0))
         self.text = tk.Label(inner, text="", font=("Segoe UI", 10),
-                             bg=BG_CARD, fg=TEXT_SECONDARY, anchor="w")
+                             bg=BG_RAISED, fg=TEXT_SECONDARY, anchor="w")
         self.text.pack(fill="x", padx=12, pady=(4, 0))
 
         # thin level meter along the bottom edge
-        self.meter = tk.Canvas(inner, height=3, bg=BG_CARD, highlightthickness=0)
+        self.meter = tk.Canvas(inner, height=3, bg=BG_RAISED, highlightthickness=0)
         self.meter.pack(fill="x", padx=12, pady=(6, 8))
         self._meter_id = None
 
@@ -545,12 +647,21 @@ class FlowMiniApp:
 
         self.root = tk.Tk()
         self.root.title("FlowMini — Voice Dictation")
-        self.root.geometry("520x764")
-        self.root.minsize(480, 640)
+        self.root.geometry("544x990")   # tall enough for every section at once
+        self.root.minsize(400, 560)   # small enough for quarter-screen snaps
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
 
+        _init_fonts()
+        self._setup_ttk()
         self._build_ui()
+
+        # responsive layout: stacked when narrow, side panel when wide
+        # (maximized / fullscreen / any snapped orientation)
+        self._wide_mode = None
+        self._wrap_at = 0
+        self._reflow()
+        self.root.bind("<Configure>", self._on_root_configure)
         self._redirect_stdout()
         self._refresh_stats()
         self._refresh_stats_label()
@@ -561,201 +672,374 @@ class FlowMiniApp:
 
     # ------------------------------------------------------------------ UI --
     def _build_ui(self):
-        # --- header ---
+        """Reframed layout: brand + stage on top, one raised settings panel,
+        output and tools below. Same widget names — only the styling moved."""
+        PADX = 22  # window gutter (spacing grid: 4 / 8 / 12 / 16 / 22)
+
+        # --- header: brand + hotkey reference chips ---
         header = tk.Frame(self.root, bg=BG)
-        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 0))
+        header.grid(row=0, column=0, sticky="ew", padx=PADX, pady=(18, 0))
         header.grid_columnconfigure(1, weight=1)
-
-        title_row = tk.Frame(header, bg=BG)
-        title_row.grid(row=0, column=0, columnspan=3, sticky="ew")
-        title_row.grid_columnconfigure(1, weight=1)
-        tk.Label(title_row, text="FlowMini", font=("Segoe UI", 15, "bold"),
+        tk.Label(header, text="FlowMini", font=FONTS["title"],
                  bg=BG, fg=TEXT_PRIMARY).grid(row=0, column=0, sticky="w")
-        tk.Label(title_row, text="voice dictation", font=("Segoe UI", 10),
-                 bg=BG, fg=ACCENT).grid(row=0, column=1, sticky="w", padx=(8, 0))
-        tk.Label(title_row, text="Ctrl+Alt+D · Ctrl+Alt+F", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).grid(row=0, column=2, sticky="e")
+        tk.Label(header, text=f"voice dictation · v{APP_VERSION}", font=FONTS["caption"],
+                 bg=BG, fg=TEXT_MUTED).grid(row=0, column=1, sticky="w",
+                                            padx=(10, 0))
+        chips = tk.Frame(header, bg=BG)
+        chips.grid(row=0, column=2, sticky="e")
+        for i, key in enumerate(("CTRL+ALT+D", "CTRL+ALT+F")):
+            chip = tk.Frame(chips, bg=BG_RAISED, highlightthickness=1,
+                            highlightbackground=BORDER)
+            tk.Label(chip, text=key, font=FONTS["mono"], bg=BG_RAISED,
+                     fg=TEXT_MUTED, padx=7, pady=3).pack()
+            chip.pack(side="left", padx=(6, 0) if i else 0)
 
-        self.status_dot = tk.Canvas(header, width=12, height=12, bg=BG, highlightthickness=0)
+        # --- status line: dot + display word + mode caption ---
+        status_row = tk.Frame(self.root, bg=BG)
+        status_row.grid(row=1, column=0, sticky="ew", padx=PADX, pady=(16, 0))
+        status_row.grid_columnconfigure(1, weight=1)
+        self.status_dot = tk.Canvas(status_row, width=12, height=12, bg=BG,
+                                    highlightthickness=0)
         self.status_dot.create_oval(1, 1, 11, 11, fill=SUCCESS, width=0, tags="dot")
-        self.status_dot.grid(row=1, column=0, sticky="w", pady=(14, 0))
-
-        self.status_label = tk.Label(header, text="IDLE", font=("Segoe UI", 22, "bold"),
+        self.status_dot.grid(row=0, column=0, sticky="w", pady=(7, 0))
+        self.status_label = tk.Label(status_row, text="IDLE", font=FONTS["display"],
                                      bg=BG, fg=SUCCESS)
-        self.status_label.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
+        self.status_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.mode_label = tk.Label(status_row, text="push-to-talk",
+                                   font=FONTS["caption"], bg=BG, fg=TEXT_MUTED)
+        self.mode_label.grid(row=0, column=2, sticky="e", pady=(8, 0))
 
-        self.mode_label = tk.Label(header, text="push-to-talk", font=("Segoe UI", 11),
-                                   bg=BG, fg=TEXT_MUTED)
-        self.mode_label.grid(row=1, column=2, sticky="e", pady=(14, 0))
-
-        # --- waveform ---
-        wave_frame = tk.Frame(self.root, bg=BG_CARD, highlightthickness=1,
+        # --- waveform: raised card, quiet slate at rest ---
+        wave_frame = tk.Frame(self.root, bg=BG_RAISED, highlightthickness=1,
                               highlightbackground=BORDER)
-        wave_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(16, 0))
-        self.wave = WaveformCanvas(wave_frame, height=64)
+        wave_frame.grid(row=2, column=0, sticky="ew", padx=PADX, pady=(14, 0))
+        self.wave = WaveformCanvas(wave_frame, height=56)
         self.wave.pack(fill="both", expand=True, padx=1, pady=1)
 
         # --- record button ---
         btn_frame = tk.Frame(self.root, bg=BG)
-        btn_frame.grid(row=2, column=0, pady=(18, 4))
-
-        self.record_canvas = tk.Canvas(btn_frame, width=104, height=104, bg=BG,
+        btn_frame.grid(row=3, column=0, pady=(16, 0))
+        self.record_canvas = tk.Canvas(btn_frame, width=96, height=96, bg=BG,
                                        highlightthickness=0, cursor="hand2")
         self.record_canvas.pack()
         self.record_canvas.bind("<Button-1>", lambda _: self._toggle_ptt())
+        self.record_canvas.bind("<Enter>", lambda _: self._set_btn_hover(True))
+        self.record_canvas.bind("<Leave>", lambda _: self._set_btn_hover(False))
         self.hint_label = tk.Label(btn_frame, text="click, or press Ctrl+Alt+D",
-                                   font=("Segoe UI", 10), bg=BG, fg=TEXT_MUTED)
-        self.hint_label.pack(pady=(6, 0))
+                                   font=FONTS["caption"], bg=BG, fg=TEXT_MUTED)
+        self.hint_label.pack(pady=(8, 0))
+        self._btn_hover = False
         self._draw_record("idle")
 
-        # --- toggle row ---
-        tog_row = tk.Frame(self.root, bg=BG)
-        tog_row.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 16))
-        tog_row.grid_columnconfigure(1, weight=1)
+        # --- settings panel: one raised surface, consistent row rhythm ---
+        panel = tk.Frame(self.root, bg=BG_RAISED, highlightthickness=1,
+                         highlightbackground=BORDER)
+        panel.grid(row=4, column=0, sticky="ew", padx=PADX, pady=(16, 0))
+        panel.grid_columnconfigure(0, weight=1)
 
-        self.toggle = ToggleSwitch(tog_row, command=self._on_toggle_vad)
-        self.toggle.grid(row=0, column=0, rowspan=2, sticky="w")
-        tk.Label(tog_row, text="VAD Auto-Dictation", font=("Segoe UI", 13),
-                 bg=BG, fg=TEXT_PRIMARY).grid(row=0, column=1, sticky="w", padx=(12, 0))
-        tk.Label(tog_row, text="hands-free", font=("Segoe UI", 10),
-                 bg=BG, fg=TEXT_MUTED).grid(row=1, column=1, sticky="w", padx=(12, 0))
+        def separator(row):
+            tk.Frame(panel, bg=BORDER_SOFT, height=1).grid(
+                row=row, column=0, sticky="ew", padx=14, pady=8)
 
-        lang_col = tk.Frame(tog_row, bg=BG)
-        lang_col.grid(row=0, column=2, rowspan=2, sticky="e")
-        tk.Label(lang_col, text="Speech language", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(anchor="e")
-        self.lang_combo = ttk.Combobox(
-            lang_col, values=list(LANG_DISPLAY.values()), state="readonly",
-            width=24, font=("Segoe UI", 10))
-        self.lang_combo.pack(anchor="e", pady=(4, 0))
+        def section(row, text):
+            tk.Label(panel, text=text, font=FONTS["section"], bg=BG_RAISED,
+                     fg=TEXT_MUTED).grid(row=row, column=0, sticky="w", padx=14)
+
+        def row_control(row, label, factory):
+            """Label left, control right. The control is BUILT inside the row
+            frame (factory pattern) — a widget can only ever be gridded in its
+            own parent, so creating it elsewhere would pile it up."""
+            r = tk.Frame(panel, bg=BG_RAISED)
+            r.grid(row=row, column=0, sticky="ew", padx=14, pady=3)
+            r.grid_columnconfigure(0, weight=1)
+            tk.Label(r, text=label, font=FONTS["control"], bg=BG_RAISED,
+                     fg=TEXT_SECONDARY).grid(row=0, column=0, sticky="w")
+            control = factory(r)
+            control.grid(row=0, column=1, sticky="e")
+            return control
+
+        # VAD hero row
+        vad_row = tk.Frame(panel, bg=BG_RAISED)
+        vad_row.grid(row=0, column=0, sticky="ew", padx=14, pady=(8, 0))
+        vad_row.grid_columnconfigure(0, weight=1)
+        vad_text = tk.Frame(vad_row, bg=BG_RAISED)
+        vad_text.grid(row=0, column=0, sticky="w")
+        tk.Label(vad_text, text="VAD auto-dictation", font=FONTS["hero"],
+                 bg=BG_RAISED, fg=TEXT_PRIMARY).pack(anchor="w")
+        tk.Label(vad_text, text="hands-free — starts when you speak",
+                 font=FONTS["caption"], bg=BG_RAISED,
+                 fg=TEXT_MUTED).pack(anchor="w", pady=(2, 0))
+        self.toggle = ToggleSwitch(vad_row, command=self._on_toggle_vad,
+                                   bg=BG_RAISED)
+        self.toggle.grid(row=0, column=1, sticky="e")
+
+        separator(1)
+        section(2, "LANGUAGE & OUTPUT")
+
+        self.lang_combo = row_control(
+            3, "Speech language",
+            lambda par: ttk.Combobox(
+                par, values=list(LANG_DISPLAY.values()), state="readonly",
+                width=24, font=FONTS["control"], style="Flow.TCombobox"))
         self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_change)
 
-        trans_row = tk.Frame(lang_col, bg=BG)
-        trans_row.pack(anchor="e", pady=(10, 0))
-        tk.Label(trans_row, text="Translate to English", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(side="left")
-        self.trans_toggle = ToggleSwitch(trans_row, command=self._on_translate_toggle)
-        self.trans_toggle.pack(side="left", padx=(10, 0))
+        self.trans_toggle = row_control(
+            4, "Translate to English",
+            lambda par: ToggleSwitch(par, command=self._on_translate_toggle,
+                                     bg=BG_RAISED))
 
-        cleanup_row = tk.Frame(lang_col, bg=BG)
-        cleanup_row.pack(anchor="e", pady=(8, 0))
-        tk.Label(cleanup_row, text="Cleanup", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(side="left")
-        self.cleanup_combo = ttk.Combobox(
-            cleanup_row, values=["light", "medium", "off"], state="readonly",
-            width=7, font=("Segoe UI", 10))
-        self.cleanup_combo.pack(side="left", padx=(8, 0))
+        self.cleanup_combo = row_control(
+            5, "Cleanup mode",
+            lambda par: ttk.Combobox(
+                par, values=["light", "medium", "off"], state="readonly",
+                width=7, font=FONTS["control"], style="Flow.TCombobox"))
         self.cleanup_combo.bind("<<ComboboxSelected>>", self._on_cleanup_change)
 
-        # --- style preset ---
-        style_row = tk.Frame(lang_col, bg=BG)
-        style_row.pack(anchor="e", pady=(8, 0))
-        tk.Label(style_row, text="Style", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(side="left")
-        self.style_combo = ttk.Combobox(
-            style_row,
-            values=["formal", "casual", "very_casual", "excited"],
-            state="readonly", width=10, font=("Segoe UI", 10))
-        self.style_combo.pack(side="left", padx=(8, 0))
+        self.style_combo = row_control(
+            6, "Style preset",
+            lambda par: ttk.Combobox(
+                par, values=["formal", "casual", "very_casual", "excited"],
+                state="readonly", width=10, font=FONTS["control"],
+                style="Flow.TCombobox"))
         self.style_combo.bind("<<ComboboxSelected>>", self._on_style_change)
 
-        # --- developer mode ---
-        dev_row = tk.Frame(lang_col, bg=BG)
-        dev_row.pack(anchor="e", pady=(8, 0))
-        tk.Label(dev_row, text="Developer", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(side="left")
-        self.dev_toggle = ToggleSwitch(dev_row, command=self._on_developer_toggle)
-        self.dev_toggle.pack(side="left", padx=(10, 0))
+        separator(7)
+        section(8, "BEHAVIOUR")
 
-        # --- per-app profiles (Day 3) ---
-        prof_row = tk.Frame(lang_col, bg=BG)
-        prof_row.pack(anchor="e", pady=(8, 0))
-        tk.Label(prof_row, text="Per-app profiles", font=("Segoe UI", 9),
-                 bg=BG, fg=TEXT_MUTED).pack(side="left")
-        self.profiles_toggle = ToggleSwitch(prof_row, command=self._on_profiles_toggle)
-        self.profiles_toggle.pack(side="left", padx=(10, 0))
+        self.dev_toggle = row_control(
+            9, "Developer mode",
+            lambda par: ToggleSwitch(par, command=self._on_developer_toggle,
+                                     bg=BG_RAISED))
 
-        # --- transcription card ---
-        card = tk.Frame(self.root, bg=BG_CARD, highlightthickness=1,
-                       highlightbackground=BORDER)
-        card.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 16))
+        self.profiles_toggle = row_control(
+            10, "Per-app profiles",
+            lambda par: ToggleSwitch(par, command=self._on_profiles_toggle,
+                                     bg=BG_RAISED))
+        tk.Frame(panel, bg=BG_RAISED, height=6).grid(row=11, column=0)
+
+        # --- last dictation card ---
+        card = tk.Frame(self.root, bg=BG_RAISED, highlightthickness=1,
+                        highlightbackground=BORDER)
+        card.grid(row=5, column=0, sticky="ew", padx=PADX, pady=(16, 0))
         card.grid_columnconfigure(0, weight=1)
+        tk.Label(card, text="LAST DICTATION", font=FONTS["section"],
+                 bg=BG_RAISED, fg=TEXT_MUTED).grid(row=0, column=0, sticky="w",
+                                                   padx=14, pady=(11, 0))
+        self.transcript_text = tk.Label(card, text="nothing dictated yet",
+                                        font=("Segoe UI", 13), bg=BG_RAISED,
+                                        fg=TEXT_MUTED, wraplength=466,
+                                        justify="left", anchor="w")
+        self.transcript_text.grid(row=1, column=0, sticky="w", padx=14,
+                                  pady=(6, 2))
+        self.transcript_raw = tk.Label(card, text="", font=FONTS["caption"],
+                                       bg=BG_RAISED, fg=TEXT_MUTED,
+                                       wraplength=466, justify="left", anchor="w")
+        self.transcript_raw.grid(row=2, column=0, sticky="w", padx=14,
+                                 pady=(0, 12))
 
-        tk.Label(card, text="TRANSCRIPTION", font=("Segoe UI", 9), bg=BG_CARD,
-                 fg=TEXT_MUTED).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 0))
-        self.transcript_text = tk.Label(card, text="—", font=("Segoe UI", 14),
-                                        bg=BG_CARD, fg=TEXT_PRIMARY,
-                                        wraplength=440, justify="left", anchor="w")
-        self.transcript_text.grid(row=1, column=0, sticky="w", padx=16, pady=(6, 2))
-        self.transcript_raw = tk.Label(card, text="", font=("Segoe UI", 10),
-                                       bg=BG_CARD, fg=TEXT_MUTED,
-                                       wraplength=440, justify="left", anchor="w")
-        self.transcript_raw.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 12))
-
-        # --- action buttons ---
+        # --- ghost action buttons ---
         row_btns = tk.Frame(self.root, bg=BG)
-        row_btns.grid(row=5, column=0, sticky="ew", padx=20, pady=(0, 8))
+        row_btns.grid(row=6, column=0, sticky="ew", padx=PADX, pady=(14, 0))
         row_btns.grid_columnconfigure(0, weight=1)
         row_btns.grid_columnconfigure(1, weight=1)
         row_btns.grid_columnconfigure(2, weight=1)
-        self.btn_test = tk.Button(row_btns, text="Self-Test", command=self._on_self_test,
-                                  bg=BG_CARD_HOVER, fg=TEXT_PRIMARY, font=("Segoe UI", 11),
-                                  relief="flat", cursor="hand2", height=2,
-                                  activebackground=BORDER, activeforeground=TEXT_PRIMARY)
-        self.btn_test.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self.btn_stats = tk.Button(row_btns, text="Refresh Stats", command=self._on_refresh_stats,
-                                   bg=BG_CARD_HOVER, fg=TEXT_PRIMARY, font=("Segoe UI", 11),
-                                   relief="flat", cursor="hand2", height=2,
-                                   activebackground=BORDER, activeforeground=TEXT_PRIMARY)
-        self.btn_stats.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        self.btn_undo = tk.Button(row_btns, text="↩ Undo (raw)", command=self._undo_paste,
-                                  bg=BG_CARD_HOVER, fg=TEXT_PRIMARY, font=("Segoe UI", 11),
-                                  relief="flat", cursor="hand2", height=2, state="disabled",
-                                  activebackground=BORDER, activeforeground=TEXT_PRIMARY)
-        self.btn_undo.grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        self.btn_test = self._ghost_button(row_btns, "Self-Test", self._on_self_test)
+        self.btn_stats = self._ghost_button(row_btns, "Refresh Stats",
+                                            self._on_refresh_stats)
+        self.btn_undo = self._ghost_button(row_btns, "↩ Undo (raw)",
+                                           self._undo_paste, state="disabled")
+        for i, btn in enumerate((self.btn_test, self.btn_stats, self.btn_undo)):
+            btn.grid(row=0, column=i, sticky="ew", ipady=6,
+                     padx=(0, 8) if i == 0 else (8, 0) if i == 1 else 0)
 
-        # --- stats ---
-        self.stats_label = tk.Label(self.root, text="", font=("Segoe UI", 11),
-                                    bg=BG, fg=TEXT_SECONDARY)
-        self.stats_label.grid(row=6, column=0, sticky="w", padx=20, pady=(0, 8))
+        # --- stats (mono, tabular) ---
+        self.stats_label = tk.Label(self.root, text="", font=FONTS["mono"],
+                                    bg=BG, fg=TEXT_MUTED)
+        self.stats_label.grid(row=7, column=0, sticky="w", padx=PADX,
+                              pady=(10, 0))
 
-        # --- log ---
-        log_frame = tk.Frame(self.root, bg=BG_CARD, highlightthickness=1,
+        # --- log console ---
+        log_frame = tk.Frame(self.root, bg=BG_RAISED, highlightthickness=1,
                              highlightbackground=BORDER)
-        log_frame.grid(row=7, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        log_frame.grid(row=8, column=0, sticky="nsew", padx=PADX, pady=(12, 20))
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
-        self.root.grid_rowconfigure(7, weight=1)
+        self.root.grid_rowconfigure(8, weight=1)
 
-        self.log_box = tk.Text(log_frame, bg=BG_CARD, fg=TEXT_SECONDARY,
-                               font=("Consolas", 9), relief="flat", state="disabled",
-                               insertbackground="white", wrap="word", highlightthickness=0,
-                               padx=12, pady=10)
+        self.log_box = tk.Text(log_frame, bg=BG_RAISED, fg=TEXT_SECONDARY,
+                               font=FONTS["mono"], relief="flat", state="disabled",
+                               insertbackground="white", wrap="word", height=6,
+                               highlightthickness=0, padx=12, pady=10)
         self.log_box.grid(row=0, column=0, sticky="nsew")
         self.log_box.tag_configure("ok", foreground=SUCCESS)
         self.log_box.tag_configure("warn", foreground=WARNING)
         self.log_box.tag_configure("err", foreground=ACCENT_GLOW)
         self.log_box.tag_configure("dim", foreground=TEXT_MUTED)
 
+        # sections kept for responsive reflow (narrow <-> wide); the transcript
+        # card re-wraps its text to whatever width it gets
+        self._sec = {"header": header, "status": status_row, "wave": wave_frame,
+                     "record": btn_frame, "panel": panel, "transcript": card,
+                     "buttons": row_btns, "stats": self.stats_label,
+                     "log": log_frame}
+        card.bind("<Configure>", self._sync_wraplength)
+
+    def _on_root_configure(self, event=None):
+        """Root resized (maximize, snap, drag): reflow when the mode changes."""
+        if event is not None and event.widget is not self.root:
+            return
+        self._reflow()
+        self._fit_status_font()
+
+    def _fit_status_font(self):
+        """Scale the big status word so it never wraps at small snap sizes.
+
+        Quarter-window snaps are only ~360 logical px wide — the 24pt
+        heading plus the mode caption no longer fit there, so the grid
+        squeezed the labels and the heading broke across two lines.
+        """
+        try:
+            width = self.root.winfo_width()
+        except Exception:
+            return
+        size = 24 if width >= 400 else (20 if width >= 350 else 17)
+        if getattr(self, "_display_pt", None) == size:
+            return
+        self._display_pt = size
+        base = FONTS["display"]
+        self.status_label.config(font=(base[0], size) + tuple(base[2:]))
+
+    def _reflow(self, _=None):
+        """Switch between the stacked (narrow) and side-panel (wide) layouts.
+
+        Runs on every root resize but only lays out again when the mode
+        actually flips (>= WIDE_BREAKPOINT). Works for maximize, Win+arrow
+        snaps, and free dragging to any size.
+        """
+        try:
+            width = self.root.winfo_width()
+        except Exception:
+            return
+        wide = width >= WIDE_BREAKPOINT
+        if wide == self._wide_mode:
+            return
+        self._wide_mode = wide
+        table = _LAYOUT_WIDE if wide else _LAYOUT_NARROW
+        for section in self._sec.values():
+            section.grid_forget()
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=0,
+                                       minsize=table["col1_minsize"])
+        for row in range(9):
+            self.root.grid_rowconfigure(row, weight=0)
+        for row in table["flex_rows"]:
+            self.root.grid_rowconfigure(row, weight=1)
+        for name, section in self._sec.items():
+            section.grid(**table[name])
+        self._sync_wraplength()
+
+    def _sync_wraplength(self, event=None):
+        """Transcript text wraps to the card width at any window size."""
+        try:
+            width = (event.width if event is not None
+                     else self._sec["transcript"].winfo_width())
+        except Exception:
+            return
+        if width < 80:
+            return
+        wrap = max(280, width - 44)
+        if abs(wrap - getattr(self, "_wrap_at", 0)) < 12:
+            return
+        self._wrap_at = wrap
+        self.transcript_text.config(wraplength=wrap)
+        self.transcript_raw.config(wraplength=wrap)
+
+    def _setup_ttk(self):
+        """Dark ttk comboboxes end-to-end: field, arrow, and the popdown list.
+
+        The vista/alt themes draw the combobox field via VSAPI and ignore
+        `fieldbackground` (the field stays light no matter what we ask), so
+        the ttk layer runs on clam — it honors every color and stays crisp.
+        """
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Flow.TCombobox",
+                        padding=(10, 6), font=FONTS["control"], borderwidth=1,
+                        arrowsize=13,
+                        fieldbackground=BG_RAISED, background=BG_RAISED,
+                        foreground=TEXT_PRIMARY, bordercolor=BORDER,
+                        arrowcolor=TEXT_SECONDARY, lightcolor=BORDER,
+                        darkcolor=BORDER)
+        style.map("Flow.TCombobox",
+                  foreground=[("readonly", TEXT_PRIMARY)],
+                  fieldbackground=[("readonly", BG_RAISED)],
+                  selectbackground=[("readonly", BG_RAISED)],
+                  selectforeground=[("readonly", TEXT_PRIMARY)],
+                  bordercolor=[("hover", ACCENT_DIM)],
+                  arrowcolor=[("hover", TEXT_PRIMARY)])
+        # the dropdown list is Tk-drawn — theme it dark too
+        self.root.option_add("*TCombobox*Listbox*Background", BG_RAISED)
+        self.root.option_add("*TCombobox*Listbox*Foreground", TEXT_PRIMARY)
+        self.root.option_add("*TCombobox*Listbox*selectBackground", ACCENT)
+        self.root.option_add("*TCombobox*Listbox*selectForeground", "#ffffff")
+        self.root.option_add("*TCombobox*Listbox*Font", FONTS["control"])
+
+    def _ghost_button(self, parent, text, command, state="normal"):
+        """Flat ghost button: raised surface, lightens on hover, dim when off."""
+        disabled = state == "disabled"
+        btn = tk.Button(parent, text=text, command=command, bd=0, relief="flat",
+                        bg=BG_RAISED, font=FONTS["control"],
+                        fg=TEXT_MUTED if disabled else TEXT_SECONDARY,
+                        activebackground=BG_HOVER, activeforeground=TEXT_PRIMARY,
+                        disabledforeground=TEXT_MUTED, cursor="hand2",
+                        highlightthickness=0, state=state)
+        if not disabled:
+            btn.bind("<Enter>",
+                     lambda e, b=btn: b.config(bg=BG_HOVER, fg=TEXT_PRIMARY))
+            btn.bind("<Leave>",
+                     lambda e, b=btn: b.config(bg=BG_RAISED, fg=TEXT_SECONDARY))
+        return btn
+
+    def _set_btn_hover(self, on):
+        """Hover feedback on the mic button (redraws with a glow ring)."""
+        on = bool(on)
+        if getattr(self, "_btn_hover", False) == on:
+            return
+        self._btn_hover = on
+        self._draw_record(getattr(self, "_record_state", "idle"),
+                          getattr(self, "_pulse", 0.0))
+
     def _draw_record(self, state="idle", pulse=0.0):
+        """The mic button — crimson disc with state rings and a hover glow."""
         c = self.record_canvas
         c.delete("all")
-        colors = {"idle": ACCENT, "recording": ACCENT_GLOW, "processing": WARNING, "vad": INFO}
+        self._record_state = state
+        colors = {"idle": ACCENT, "recording": ACCENT_GLOW,
+                  "processing": WARNING, "vad": INFO}
         col = colors.get(state, ACCENT)
+        cx = 48
         # expanding pulse rings while recording
         if state == "recording":
             for k in range(3):
                 t = (pulse + k / 3.0) % 1.0
-                r = 40 + t * 11
+                r = 34 + t * 9
                 ring = lerp_color(col, BG, t * 0.9)
-                c.create_oval(52 - r, 52 - r, 52 + r, 52 + r, outline=ring, width=3)
+                c.create_oval(cx - r, cx - r, cx + r, cx + r,
+                              outline=ring, width=2)
+        # hover glow ring (any state)
+        if getattr(self, "_btn_hover", False):
+            c.create_oval(2, 2, 94, 94, outline=lerp_color(col, BG, 0.35),
+                          width=2)
         # main disc with a soft outer halo
-        c.create_oval(6, 6, 98, 98, outline=lerp_color(col, BG, 0.75), width=1)
-        c.create_oval(10, 10, 94, 94, fill=col, width=0)
+        c.create_oval(4, 4, 92, 92, outline=lerp_color(col, BG, 0.75), width=1)
+        c.create_oval(8, 8, 88, 88, fill=col, width=0)
         if state == "recording":
-            c.create_rectangle(40, 40, 64, 64, fill="white", width=0)
+            c.create_rectangle(38, 38, 58, 58, fill="white", width=0)
         else:
-            c.create_oval(40, 40, 64, 64, fill="white", width=0)
+            c.create_oval(38, 38, 58, 58, fill="white", width=0)
 
     def _redirect_stdout(self):
         class UiStream:
@@ -1065,6 +1349,12 @@ class FlowMiniApp:
                 self.root.after_cancel(self._hud_hide_job)
                 self._hud_hide_job = None
             self.hud.show(state, text)
+            if state != "recording":
+                # 10s auto-hide backstop: any card whose events stop arriving
+                # removes itself (the loading card used to pin forever).
+                # "recording" is exempt — it lives until the state machine
+                # moves on to processing/pasted/idle, each of which re-arms.
+                self._hud_hide_later(HUD_AUTO_HIDE_MS)
         except Exception as exc:
             self.log(f"HUD unavailable: {exc}", "err")
             self.hud = None
@@ -1130,6 +1420,16 @@ class FlowMiniApp:
         elif event == "model_download":
             self.set_status("loading")
             self._set_transcript("", "", placeholder=(data or {}).get("text") or "Downloading model…")
+        elif event == "whisper_ready":
+            # model finished loading — leave the loading state for real
+            # (previously nothing cleared it, so the status/HUD sat on
+            # "STARTING ASR" until the first completed dictation)
+            was_loading = getattr(self, "_status", None) == "loading"
+            self.set_status("vad" if (self.core and self.core.vad_mode) else "idle")
+            if self.hud and self.hud.visible:
+                self._hud_hide()
+            if was_loading:
+                self._set_transcript("", "", placeholder="nothing dictated yet")
         elif event == "stage":
             if data:
                 name = data.get("stage", "ASR")
@@ -1217,7 +1517,11 @@ class FlowMiniApp:
         self.log(msg, "dim")
 
     def _set_transcript(self, raw, polished, english=None, placeholder=None):
-        text = polished or raw or placeholder or "—"
+        text = polished or raw or placeholder or "nothing dictated yet"
+        # placeholders (listening / thinking / idle) read as muted captions,
+        # real dictation reads as primary text
+        self.transcript_text.config(
+            fg=TEXT_PRIMARY if (polished or raw) else TEXT_MUTED)
         self._tw_text = text
         self._tw_idx = 0
         self.transcript_text.config(text="")

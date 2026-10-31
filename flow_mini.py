@@ -1520,6 +1520,8 @@ class FlowMini:
             print(f"[FlowMini] Whisper ready in {time.monotonic() - t0:.0f}s "
                   f"({device}/{compute}, beam={self.stt_beam_size}, "
                   f"accuracy={self.stt_accuracy_mode})")
+            # let the UI leave the "loading" state (main-window status, HUD)
+            self._emit("whisper_ready")
             return self._whisper
         except Exception as exc:
             print(f"[FlowMini] Whisper load failed: {exc}")

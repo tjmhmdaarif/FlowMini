@@ -36,6 +36,7 @@ no subscription, no telemetry you didn't ask for.
 | 🌍 **100+ languages** | Auto-detects the language you speak per utterance — or translate everything to English on the fly. |
 | 🔌 **Optional AI polish** | Level up to an LLM rewrite (OpenRouter / Gemini / OpenAI) for tone and style. Fully optional. |
 | 🕵️ **Private by default** | The only network call in the whole app is the optional polisher. Everything else is local. |
+| 🎯 **Per-app profiles** | Dictating in VS Code? Developer mode, no mangled identifiers. In Outlook? Formal style — each window picks its own mode automatically. |
 | 🪟 **Floating HUD** | A borderless always-on-top card appears near your cursor while dictating — status, live mic level, and the final text, even with the app minimized to the tray. Never steals focus. |
 
 ## 🚀 Quick start
@@ -114,6 +115,42 @@ Three cleanup modes (set `cleanup_mode` in `config.json` or use the in-app dropd
   Punjabi, Urdu, Arabic, Persian, and more via `translit.py`.
 - **Translate-to-English toggle** — everything you say is transcribed *and pasted* as English.
 
+## 🎯 Per-app profiles
+
+FlowMini already watches which window you're focused on (that's where the text
+lands). It now also switches **how it writes**, per app — no clicking, no toggling:
+
+| You dictate in | Profile | What changes |
+|---|---|---|
+| VS Code, Cursor, terminals, … | `code` | **Developer mode** — no sentence capitalization, no forced trailing period: `import os` stays `import os` |
+| Outlook, Mail, Thunderbird, … | `mail` | **Formal style** preset for the AI polish |
+| anything else | *(default)* | your global settings, untouched |
+
+- Rules match the **process name** (`code.exe`) and/or the **window title**
+  (`*Gmail*` — handy for webmail in a browser): case-insensitive, `*` wildcards,
+  first matching rule wins.
+- The profile is chosen **when a dictation starts** and applies to that utterance
+  only — your global `developer_mode` / `style_preset` / `cleanup_mode` are never
+  modified, so switching apps switches back automatically.
+- The built-in `code` + `mail` rules ship enabled. Customize or turn the whole
+  feature off in `config.json`:
+
+```json
+"app_profiles_enabled": true,
+"app_profiles": [
+  {"name": "code", "apps": ["code.exe", "*cursor*", "*terminal*"],
+   "developer_mode": true},
+  {"name": "mail", "apps": ["outlook.exe"], "title": ["*gmail*"],
+   "style_preset": "formal"},
+  {"name": "meetings", "apps": ["zoom.exe"], "cleanup_mode": "light"}
+]
+```
+
+- Allowed overrides per rule: `developer_mode`, `style_preset`, `cleanup_mode`.
+- The active profile is logged (`Profile 'code' · code.exe`) and shown as a chip
+  on the HUD while recording; the **Per-app profiles** switch in the app turns
+  the feature on or off without editing config.
+
 ## ⚙️ Configuration
 
 FlowMini reads `config.json` next to the exe (or script). Everything is optional —
@@ -127,7 +164,8 @@ defaults are baked in. Highlights:
   "stt_device": "auto",
   "detect_language": true,
   "translate_to_english": false,
-  "show_hud": true
+  "show_hud": true,
+  "app_profiles_enabled": true
 }
 ```
 
@@ -137,6 +175,8 @@ defaults are baked in. Highlights:
 - `snippets.py`: define shortcodes that expand into full blocks of text
 - `developer_mode`: code-aware vocabulary and formatting
 - `show_hud`: the floating dictation card near your cursor (default `true`)
+- `app_profiles_enabled` / `app_profiles`: per-app behaviour rules — see
+  [Per-app profiles](#-per-app-profiles) above
 
 ## 🗓️ Roadmap
 
@@ -144,7 +184,7 @@ One focused improvement per day:
 
 - [x] **Day 1** — floating dictation HUD (status + mic level + text near the cursor)
 - [x] **Day 2** — first-run model download progress (live % and MB in the HUD + main window, resume-safe)
-- [ ] Day 3 — per-app profiles (code mode in editors, formal style in mail)
+- [x] **Day 3** — per-app profiles (code mode in editors, formal style in mail)
 - [ ] Day 4 — auto-start with Windows + tray quick-menu
 - [ ] Day 5 — CI: the EXE builds automatically on every tag
 - [ ] Day 6 — winget manifest (`winget install FlowMini`)
@@ -176,10 +216,14 @@ pip install pyinstaller
 ## 🧪 Tests
 
 ```powershell
-pytest tests_speech_transform.py tests_translit.py tests_single_instance.py tests_model_progress.py
+python tests_speech_transform.py     # Speech Transform Engine (47 checks)
+python tests_translit.py             # script-aware romanization (20 checks)
+python tests_model_progress.py       # Day-2 model download progress (18 checks)
+python tests_single_instance.py      # single-instance mutex guard (7 checks)
+python tests_profiles.py             # Day-3 per-app profiles (58 checks)
 ```
 
-All four suites are orchestration-safe: they run offline (no microphone, no API key,
+All five suites are orchestration-safe: they run offline (no microphone, no API key,
 no Ollama), and the single-instance guard has a `FLOWMINI_MULTI=1` bypass so test
 harnesses can run multiple copies without touching your real config.
 

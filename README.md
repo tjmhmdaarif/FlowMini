@@ -39,6 +39,26 @@ no subscription, no telemetry you didn't ask for.
 | 🎯 **Per-app profiles** | Dictating in VS Code? Developer mode, no mangled identifiers. In Outlook? Formal style — each window picks its own mode automatically. |
 | 🪟 **Floating HUD** | A borderless always-on-top card appears near your cursor while dictating — status, live mic level, and the final text, even with the app minimized to the tray. Never steals focus. |
 
+## 🎨 Interface
+
+The v1.1.0.2 UI is built around one restrained design language: quiet slate
+surfaces at rest, with **crimson reserved for live meaning** — recording,
+hotkeys, active states — so the app never shouts when it's idle.
+
+- **Responsive window** — a stacked single column when narrow; at ≥ 900 px the
+  settings panel moves into a right-hand sidebar. Looks right windowed,
+  snapped to half-screen or quarter-screen, and maximized/fullscreen, with the
+  transcript re-wrapping and the waveform scaling to any width.
+- **Floating HUD with a 10-second timeout** — the card near your cursor now
+  auto-hides 10 seconds after its last update, so a loading or stale state can
+  never pin itself to your screen. Live recording cards stay until the state
+  machine moves on.
+- **One raised settings surface** — dark comboboxes and toggles, hotkey chips
+  in the header, mono session stats, and a colour-coded log console.
+
+<img src="docs/screenshots/app-window.png" alt="FlowMini windowed" width="480">
+<img src="docs/screenshots/app-maximized.png" alt="FlowMini maximized — split stage + settings layout" width="760">
+
 ## 🚀 Quick start
 
 ### Option A — download the app (no Python needed)
@@ -185,6 +205,8 @@ One focused improvement per day:
 - [x] **Day 1** — floating dictation HUD (status + mic level + text near the cursor)
 - [x] **Day 2** — first-run model download progress (live % and MB in the HUD + main window, resume-safe)
 - [x] **Day 3** — per-app profiles (code mode in editors, formal style in mail)
+- [x] **v1.1.0.2** — interface refresh: refined-crimson design system, responsive
+  windowed → fullscreen layouts, HUD 10s auto-hide, loading-state fix
 - [ ] Day 4 — auto-start with Windows + tray quick-menu
 - [ ] Day 5 — CI: the EXE builds automatically on every tag
 - [ ] Day 6 — winget manifest (`winget install FlowMini`)

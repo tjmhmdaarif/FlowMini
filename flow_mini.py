@@ -91,6 +91,7 @@ DEFAULT_CONFIG = {
     "show_hud": True,             # floating mic HUD near the cursor while dictating
     "detect_language": True,      # let Whisper auto-detect the spoken language per utterance
     "translate_to_english": False,  # transcribe and translate everything into English
+    "start_with_windows": False,  # Day 4: launch FlowMini at logon (HKCU Run key)
 }
 
 # Win32 virtual key codes for the hotkeys we register

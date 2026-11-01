@@ -37,6 +37,7 @@ from ctypes import wintypes
 
 import flow_mini
 from flow_mini import FlowMini, load_config, init_db
+import autostart
 
 # ===========================================================================
 # Heard-line formatting — pronunciation + optional original script / meaning
@@ -261,7 +262,7 @@ FONT_BASE = {
 FONTS = dict(FONT_BASE)  # refined in FlowMiniApp.__init__ via _init_fonts()
 
 #: App version shown in the UI and shipped on GitHub releases.
-APP_VERSION = "1.1.0.2"
+APP_VERSION = "1.1.1.0"
 
 
 def _init_fonts():
@@ -666,6 +667,11 @@ class FlowMiniApp:
         self._refresh_stats()
         self._refresh_stats_label()
 
+        # Day 4: bring the logon entry in line with the user's saved choice.
+        # Also heals: a manually deleted Run value gets re-created, and a
+        # moved exe gets its refreshed path, on the next launch.
+        threading.Thread(target=self._autostart_sync_boot, daemon=True).start()
+
         self.root.after(300, self._register_hotkeys)
         self.root.after(50, self._pump_ui_queue)
         self.root.after(33, self._draw_waveform)
@@ -815,7 +821,12 @@ class FlowMiniApp:
             10, "Per-app profiles",
             lambda par: ToggleSwitch(par, command=self._on_profiles_toggle,
                                      bg=BG_RAISED))
-        tk.Frame(panel, bg=BG_RAISED, height=6).grid(row=11, column=0)
+
+        self.autostart_toggle = row_control(
+            11, "Start with Windows",
+            lambda par: ToggleSwitch(par, command=self._on_autostart_toggle,
+                                     bg=BG_RAISED))
+        tk.Frame(panel, bg=BG_RAISED, height=6).grid(row=12, column=0)
 
         # --- last dictation card ---
         card = tk.Frame(self.root, bg=BG_RAISED, highlightthickness=1,
@@ -1159,6 +1170,12 @@ class FlowMiniApp:
                     bool(getattr(self.core, "app_profiles_enabled", True)))
             except Exception:
                 pass
+        if hasattr(self, "autostart_toggle"):
+            try:
+                self.autostart_toggle.set_state(
+                    bool(self.config.get("start_with_windows", False)))
+            except Exception:
+                pass
         # Build specs, then let _HotkeyWindow register + pump them on one thread.
         self.hotkey_ids = {}
         self._register_count = 0
@@ -1253,10 +1270,21 @@ class FlowMiniApp:
         if not self.core:
             return
         mode = (self.cleanup_combo.get() or "light").lower()
+        self._set_cleanup_mode(mode)
+
+    def _set_cleanup_mode(self, mode):
+        """Apply a cleanup mode from any entry point (combobox or tray menu)."""
+        if not self.core:
+            return
         if mode not in ("off", "light", "medium"):
             mode = "light"
         self.core.cleanup_mode = mode
         self.config["cleanup_mode"] = mode
+        try:
+            if hasattr(self, "cleanup_combo"):
+                self.cleanup_combo.set(mode)
+        except Exception:
+            pass
         self.log("Cleanup: " + {
             "off": "off — pastes the raw transcript",
             "light": "light — symbols, fillers, corrections & punctuation (offline, fast)",
@@ -1303,6 +1331,11 @@ class FlowMiniApp:
                      "(editors → developer, mail → formal)", "ok")
         else:
             self.log("Per-app profiles: OFF — your global settings apply everywhere", "ok")
+        try:
+            if hasattr(self, "profiles_toggle"):
+                self.profiles_toggle.set_state(bool(on))
+        except Exception:
+            pass
         self._save_config_safe()
 
     def _undo_paste(self):
@@ -1318,6 +1351,81 @@ class FlowMiniApp:
             self.log("Undid transform — raw transcript pasted", "warn")
         except Exception as exc:
             self.log(f"Undo paste failed: {exc}", "err")
+
+    # ---------------------------------------------------- day 4: autostart --
+    def _autostart_sync_boot(self):
+        """Startup thread: reconcile the HKCU Run key with config.json."""
+        want = bool(self.config.get("start_with_windows", False))
+        try:
+            result = autostart.sync_on_startup(want)
+        except Exception:
+            result = "failed"
+        self._autostart_report(result, boot=True)
+
+    def _autostart_report(self, result, boot=False):
+        msgs = {
+            "on":      ("Auto-start with Windows: ON", "dim"),
+            "off":     ("Auto-start with Windows: OFF", "dim"),
+            "healed":  ("Auto-start re-created — the Windows logon entry was missing or stale",
+                        "ok"),
+            "removed": ("Stale auto-start entry removed (start with Windows is OFF)",
+                        "warn"),
+            "failed":  ("Auto-start: could not touch the registry Run key", "err"),
+        }
+        text, tag = msgs.get(result, ("Auto-start state unknown", "warn"))
+        # Skip the repetitive boot lines ("on"/"off") — the toggle already shows it.
+        if boot and result in ("on", "off"):
+            return
+        self.log(text, tag)
+
+    def _on_autostart_toggle(self, on):
+        """Toggle 'Start with Windows' — shared by the window switch + tray menu."""
+        on = bool(on)
+        ok = autostart.set_run_entry(on)
+        self.config["start_with_windows"] = bool(ok and on)
+        if ok:
+            self.log("Auto-start with Windows: " +
+                     ("ON — FlowMini launches at logon" if on else
+                      "OFF — Windows will no longer launch FlowMini"), "ok")
+        else:
+            self.log("Auto-start toggle failed — registry write denied?", "err")
+        try:
+            if hasattr(self, "autostart_toggle"):
+                self.autostart_toggle.set_state(bool(ok and on))
+        except Exception:
+            pass
+        if ok:
+            self._save_config_safe()
+
+    def _tray_toggle_hud(self, on):
+        """Tray-only: floating HUD on/off (the window has no switch for it)."""
+        self.config["show_hud"] = bool(on)
+        if not on and self.hud is not None:
+            try:
+                self.hud.win.withdraw()
+            except Exception:
+                pass
+        self.log(f"Floating HUD: {'ON' if on else 'OFF'}", "ok")
+        self._save_config_safe()
+
+    def _tray_toggle_translate(self, on):
+        """Tray-only entry point for Translate-to-English; keeps the widget in sync."""
+        if not self.core:
+            return
+        self._on_translate_toggle(bool(on))
+        try:
+            if hasattr(self, "trans_toggle"):
+                self.trans_toggle.set_state(bool(on))
+        except Exception:
+            pass
+
+    def _tray_open_config(self):
+        """Open the folder holding config.json / dictionary / sessions db."""
+        try:
+            os.startfile(flow_mini.BASE_DIR)          # noqa: S606 — user-initiated
+            self.log(f"Opened: {flow_mini.BASE_DIR}", "dim")
+        except Exception as exc:
+            self.log(f"Could not open the config folder: {exc}", "err")
 
     def _save_config_safe(self):
         try:
@@ -1566,6 +1674,8 @@ class FlowMiniApp:
                     self._handle_core_event(item[1], item[2])
                 elif item[0] == "action":
                     self._handle_action(item[1])
+                elif item[0] == "tray":
+                    self._handle_tray(item[1], item[2])
                 elif item[0] == "hotkey_reg":
                     self._handle_hotkey_registered(item[1], item[2])
         except queue.Empty:
@@ -1589,17 +1699,99 @@ class FlowMiniApp:
         d.ellipse([24, 24, 40, 40], fill=(12, 12, 18))
         return img
 
+    def _on_tray(self, what, arg=None):
+        """Post a tray-menu action to the Tk thread (pystray runs elsewhere)."""
+        self.ui_queue.put(("tray", what, arg))
+
+    def _handle_tray(self, what, arg):
+        """Dispatch a tray action on the tk main thread. arg=None means toggle."""
+        mapping = {
+            "show":        lambda: self._show_window(),
+            "hide":        lambda: self._hide_to_tray(),
+            "ptt":         lambda: self._toggle_ptt(),
+            "vad":         lambda: self._toggle_vad(),
+            "selftest":    lambda: self._on_self_test(),
+            "autostart":   lambda: self._on_autostart_toggle(not self.config.get("start_with_windows", False)),
+            "hud":         lambda: self._tray_toggle_hud(not self.config.get("show_hud", True)),
+            "profiles":    lambda: self._on_profiles_toggle(not bool(self.core and self.core.app_profiles_enabled)),
+            "translate":   lambda: self._tray_toggle_translate(not bool(self.core and self.core.translate_english)),
+            "cleanup":     lambda: self._set_cleanup_mode(arg),   # arg = mode name
+            "open_config": lambda: self._tray_open_config(),
+        }
+        fn = mapping.get(what)
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception as exc:
+            self.log(f"Tray action '{what}' failed: {exc}", "err")
+
     def start_tray(self):
+        """Day 4 quick-menu: live checkbox states, radio cleanup submenu,
+        and every action marshalled onto the tk thread via ui_queue."""
         import pystray
+
+        # Checkboxes read their state live (evaluated each time the menu opens).
+        def checked_autostart(_item):
+            return bool(self.config.get("start_with_windows", False))
+
+        def checked_hud(_item):
+            return bool(self.config.get("show_hud", True))
+
+        def checked_vad(_item):
+            return bool(self.core and self.core.vad_mode)
+
+        def checked_profiles(_item):
+            return bool(self.core and self.core.app_profiles_enabled)
+
+        def checked_translate(_item):
+            return bool(self.core and self.core.translate_english)
+
+        def checked_cleanup(mode):
+            def fn(_item):
+                current = getattr(self.core, "cleanup_mode", None) \
+                    or self.config.get("cleanup_mode", "light")
+                return current == mode
+            return fn
+
+        def cleanup_mode_item(mode):
+            return pystray.MenuItem(
+                mode,
+                lambda icon, _item: self._on_tray("cleanup", mode),
+                checked=checked_cleanup(mode),
+                radio=True,
+            )
+
         menu = pystray.Menu(
             pystray.MenuItem("FlowMini — Voice Dictation", None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Show window", lambda i, _: self._show_window()),
-            pystray.MenuItem("Hide window", lambda i, _: self._hide_to_tray()),
+            pystray.MenuItem("Show window", lambda i, _: self._on_tray("show")),
+            pystray.MenuItem("Hide window", lambda i, _: self._on_tray("hide")),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Start Dictation", lambda i, _: self._toggle_ptt()),
-            pystray.MenuItem("Toggle VAD", lambda i, _: self._toggle_vad()),
-            pystray.MenuItem("Run Self-Test", lambda i, _: self._on_self_test()),
+            pystray.MenuItem("Start Dictation", lambda i, _: self._on_tray("ptt")),
+            pystray.MenuItem("VAD auto-dictation", lambda i, _: self._on_tray("vad"),
+                             checked=checked_vad),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Start with Windows",
+                             lambda i, _: self._on_tray("autostart"),
+                             checked=checked_autostart),
+            pystray.MenuItem("Per-app profiles",
+                             lambda i, _: self._on_tray("profiles"),
+                             checked=checked_profiles),
+            pystray.MenuItem("Floating HUD",
+                             lambda i, _: self._on_tray("hud"),
+                             checked=checked_hud),
+            pystray.MenuItem("Translate to English",
+                             lambda i, _: self._on_tray("translate"),
+                             checked=checked_translate),
+            pystray.MenuItem("Cleanup mode",
+                             pystray.Menu(
+                                 *[cleanup_mode_item(m)
+                                   for m in ("off", "light", "medium")])),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Run Self-Test", lambda i, _: self._on_tray("selftest")),
+            pystray.MenuItem("Open config folder",
+                             lambda i, _: self._on_tray("open_config")),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", lambda i, _: self._quit()),
         )

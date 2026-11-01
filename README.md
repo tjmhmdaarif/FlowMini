@@ -105,6 +105,20 @@ Change them anytime in `config.json` (`trigger_key`, `vad_trigger_key`).
 Some combos get stolen by graphics-card drivers — if a key does nothing, pick
 another from `KEY_MAP` in `flow_mini.py`.
 
+## 🚀 Auto-start & the tray quick-menu
+
+- **Start with Windows** — a toggle in the BEHAVIOUR panel and in the tray menu
+  registers/unregisters a user-scope logon entry (`HKCU\...\CurrentVersion\Run`,
+  no admin rights needed). It launches `FlowMini.exe` directly — or
+  `pythonw.exe flowmini_app.py` when running from source, so no console window
+  at logon. The entry self-heals: if Windows loses it or the app folder moves,
+  the next launch re-creates it with the current path.
+- **Tray quick-menu** — right-click the tray icon for live checkbox states:
+  Start Dictation, VAD auto-dictation, Start with Windows, Per-app profiles,
+  Floating HUD, Translate to English, an **off / light / medium** cleanup-mode
+  radio submenu, Run Self-Test, and Open config folder. Toggling from the menu
+  writes through `config.json` and keeps the in-app switches in sync.
+
 ## 🧹 The Speech Transform Engine
 
 Raw Whisper output is messy. Before anything is pasted, a deterministic,
@@ -185,6 +199,7 @@ defaults are baked in. Highlights:
   "detect_language": true,
   "translate_to_english": false,
   "show_hud": true,
+  "start_with_windows": false,      # Day 4: launch at logon
   "app_profiles_enabled": true
 }
 ```
@@ -207,7 +222,8 @@ One focused improvement per day:
 - [x] **Day 3** — per-app profiles (code mode in editors, formal style in mail)
 - [x] **v1.1.0.2** — interface refresh: refined-crimson design system, responsive
   windowed → fullscreen layouts, HUD 10s auto-hide, loading-state fix
-- [ ] Day 4 — auto-start with Windows + tray quick-menu
+- [x] **Day 4** — auto-start with Windows + tray quick-menu (HKCU Run key with
+  self-heal, live checkbox states incl. cleanup-mode radio submenu)
 - [ ] Day 5 — CI: the EXE builds automatically on every tag
 - [ ] Day 6 — winget manifest (`winget install FlowMini`)
 - [ ] Day 7 — streaming partial transcript (words appear while you speak)
@@ -243,11 +259,14 @@ python tests_translit.py             # script-aware romanization (20 checks)
 python tests_model_progress.py       # Day-2 model download progress (18 checks)
 python tests_single_instance.py      # single-instance mutex guard (7 checks)
 python tests_profiles.py             # Day-3 per-app profiles (58 checks)
+python tests_autostart.py            # Day-4 auto-start Run key (25 checks)
 ```
 
-All five suites are orchestration-safe: they run offline (no microphone, no API key,
+All six suites are orchestration-safe: they run offline (no microphone, no API key,
 no Ollama), and the single-instance guard has a `FLOWMINI_MULTI=1` bypass so test
-harnesses can run multiple copies without touching your real config.
+harnesses can run multiple copies without touching your real config. The
+auto-start suite drills a temporary `HKCU\Software\FlowMini_Test_Autostart_*`
+key — your real logon entry is never touched.
 
 ## 📁 Project layout
 
@@ -259,6 +278,7 @@ FlowMini/
 ├── translit.py             # script-aware romanization for 13+ languages
 ├── snippets.py             # shortcode → text expansion
 ├── auto_learn.py           # learns from your corrections
+├── autostart.py            # Day 4: HKCU Run-key management (logon auto-start)
 ├── FlowMini.spec           # PyInstaller build recipe
 └── docs/screenshots/       # the pictures on this page
 ```

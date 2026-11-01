@@ -236,6 +236,22 @@ One focused improvement per day:
 - [ ] Day 6 — winget manifest (`winget install FlowMini`)
 - [ ] Day 7 — streaming partial transcript (words appear while you speak)
 
+## 🔢 Build & release numbering
+
+Every packaged build (zip/exe) gets its own fourth version segment — a new
+number per build, so a screenshot from a friend always maps to an exact
+build:
+
+| Build | Version | What changed |
+|---|---|---|
+| Day 3 packaged | `v1.1.0.2` | UI refresh (also the last tag on the releases page) |
+| Day 4 (today) | `v1.1.0.3` | auto-start with Windows + tray quick-menu |
+| next builds | `v1.1.0.4` … `v1.1.0.12` | one number each, small or big |
+| after `v1.1.0.12` | `v1.1.1.01`, then `v1.1.1.02`, … | minor bump rolls at 12 |
+
+`APP_VERSION` in `flowmini_app.py` is the single source of truth — the title
+bar, the in-app label and the release notes all show it.
+
 ## 📊 Extras
 
 - **Session telemetry** — every dictation (duration, word count, end-to-end latency)

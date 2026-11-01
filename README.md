@@ -15,7 +15,12 @@ built with pure Python, local Whisper speech-to-text, and a deterministic text-c
 ![Offline STT](https://img.shields.io/badge/STT-100%25%20offline%20(Whisper)-green)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-<img src="docs/screenshots/app-window.png" alt="FlowMini control panel" width="720">
+
+
+
+https://github.com/user-attachments/assets/cc36e96f-a77b-4bc5-b5fb-90f52f2a4307
+
+
 
 </div>
 
@@ -38,6 +43,9 @@ no subscription, no telemetry you didn't ask for.
 | 🕵️ **Private by default** | The only network call in the whole app is the optional polisher. Everything else is local. |
 | 🎯 **Per-app profiles** | Dictating in VS Code? Developer mode, no mangled identifiers. In Outlook? Formal style — each window picks its own mode automatically. |
 | 🪟 **Floating HUD** | A borderless always-on-top card appears near your cursor while dictating — status, live mic level, and the final text, even with the app minimized to the tray. Never steals focus. |
+
+<img src="docs/screenshots/app-window.png" alt="FlowMini control panel" width="720">
+
 
 ## 🎨 Interface
 

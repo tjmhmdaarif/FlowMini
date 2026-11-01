@@ -6,7 +6,7 @@
   "vad_silence_gap_s": 1.0,
   "vad_max_utterance_s": 30.0,
   "polisher": true,
-  "cleanup_mode": "light",
+  "cleanup_mode": "medium",
   "style_preset": "casual",
   "stt_engine": "auto",
   "stt_model": "large-v3-turbo",
@@ -16,7 +16,10 @@
   "stt_accuracy_mode": "high",
   "auto_learn": true,
   "developer_mode": false,
+  "app_profiles_enabled": true,
   "show_hud": true,
-  "detect_language": true,
-  "translate_to_english": false
+  "detect_language": false,
+  "translate_to_english": true,
+  "start_with_windows": true,
+  "language": "ta-IN"
 }

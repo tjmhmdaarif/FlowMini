@@ -232,7 +232,7 @@ One focused improvement per day:
   windowed → fullscreen layouts, HUD 10s auto-hide, loading-state fix
 - [x] **Day 4** — auto-start with Windows + tray quick-menu (HKCU Run key with
   self-heal, live checkbox states incl. cleanup-mode radio submenu)
-- [ ] Day 5 — CI: the EXE builds automatically on every tag
+- [x] **Day 5** — CI: the EXE builds automatically on every tag ✅
 - [ ] Day 6 — winget manifest (`winget install FlowMini`)
 - [ ] Day 7 — streaming partial transcript (words appear while you speak)
 
@@ -246,6 +246,7 @@ build:
 |---|---|---|
 | Day 3 packaged | `v1.1.0.2` | UI refresh (also the last tag on the releases page) |
 | Day 4 (today) | `v1.1.0.3` | auto-start with Windows + tray quick-menu |
+| Day 5 (today) | `v1.1.0.4` | CI: EXE builds automatically on every tag |
 | next builds | `v1.1.0.4` … `v1.1.0.12` | one number each, small or big |
 | after `v1.1.0.12` | `v1.1.1.01`, then `v1.1.1.02`, … | minor bump rolls at 12 |
 

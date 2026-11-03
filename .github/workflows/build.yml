@@ -1,0 +1,43 @@
+name: Build FlowMini EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install -r requirements.txt
+          .venv\Scripts\python.exe -m pip install pyinstaller
+
+      - name: Build EXE
+        run: |
+          .venv\Scripts\pyinstaller.exe FlowMini.spec --noconfirm
+
+      - name: Package release zip
+        run: |
+          $version = (Get-Content flowmini_app.py | Select-String 'APP_VERSION = "([\d.]+)"').Matches.Groups[1].Value
+          Compress-Archive -Path "dist\FlowMini" -DestinationPath "FlowMini-win64-$version.zip" -Force
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FlowMini-win64-*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

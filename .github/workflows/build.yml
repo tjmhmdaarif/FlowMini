@@ -4,8 +4,10 @@ on:
   push:
     tags:
       - 'v*'
-  release:
-    types: [published]
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   build:
@@ -34,10 +36,13 @@ jobs:
           $version = (Get-Content flowmini_app.py | Select-String 'APP_VERSION = "([\d.]+)"').Matches.Groups[1].Value
           Compress-Archive -Path "dist\FlowMini" -DestinationPath "FlowMini-win64-$version.zip" -Force
 
-      - name: Upload release asset
+      - name: Create GitHub release and upload asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: FlowMini-win64-*.zip
           generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

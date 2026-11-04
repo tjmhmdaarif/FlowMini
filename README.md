@@ -247,6 +247,7 @@ build:
 | Day 3 packaged | `v1.1.0.2` | UI refresh (also the last tag on the releases page) |
 | Day 4 (today) | `v1.1.0.3` | auto-start with Windows + tray quick-menu |
 | Day 5 (today) | `v1.1.0.4` | CI: EXE builds automatically on every tag |
+| Day 6 | `v1.1.0.5` | winget manifest (`winget install FlowMini`) |
 | next builds | `v1.1.0.4` … `v1.1.0.12` | one number each, small or big |
 | after `v1.1.0.12` | `v1.1.1.01`, then `v1.1.1.02`, … | minor bump rolls at 12 |
 

@@ -262,7 +262,7 @@ FONT_BASE = {
 FONTS = dict(FONT_BASE)  # refined in FlowMiniApp.__init__ via _init_fonts()
 
 #: App version shown in the UI and shipped on GitHub releases.
-APP_VERSION = "1.1.0.4"  # build numbering: 1.1.0.N rises with every build,
+APP_VERSION = "1.1.0.5"  # build numbering: 1.1.0.N rises with every build,
                           # N=4 today (Day 5 build: CI auto-build); N=12 last, then 1.1.1.01+
 
 

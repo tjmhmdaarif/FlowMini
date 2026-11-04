@@ -25,8 +25,8 @@
 - Uploads to GitHub Release with auto-generated release notes
 - Version extracted from `APP_VERSION` in `flowmini_app.py`
 
-### Version Bump
-- `flowmini_app.py:265` — `APP_VERSION = "1.1.0.4"` (up from 1.1.0.3)
+### Version Bump to v1.1.0.5
+- `flowmini_app.py:265` — `APP_VERSION = "1.1.0.5"` (up from 1.1.0.4)
 
 ---
 

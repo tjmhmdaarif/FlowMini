@@ -8,7 +8,7 @@ From the repo (https://github.com/tjmhmdaarif/FlowMini):
 - ✅ **Day 3:** Per-app profiles (code mode in editors, formal style in mail)
 - ✅ **Day 4:** Auto-start with Windows (HKCU Run key with self-heal) + tray quick-menu
 - [ ] **Day 5:** CI — EXE builds automatically on every tag (THIS IS TODAY)
-- [ ] **Day 6:** winget manifest (winget install FlowMini)
+- [x] **Day 6:** winget manifest (winget install FlowMini) ✅
 - [ ] **Day 7:** Streaming partial transcript
 
 ---

@@ -233,7 +233,7 @@ One focused improvement per day:
 - [x] **Day 4** — auto-start with Windows + tray quick-menu (HKCU Run key with
   self-heal, live checkbox states incl. cleanup-mode radio submenu)
 - [x] **Day 5** — CI: the EXE builds automatically on every tag ✅
-- [ ] Day 6 — winget manifest (`winget install FlowMini`)
+- [x] **Day 6** — winget manifest (`winget install FlowMini`) ✅
 - [ ] Day 7 — streaming partial transcript (words appear while you speak)
 
 ## 🔢 Build & release numbering

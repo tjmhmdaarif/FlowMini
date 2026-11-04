@@ -1,0 +1,50 @@
+PackageName: FlowMini
+PackageVersion: 1.1.0.4
+PackageAlias: tjmhmdaarif.FlowMini
+Publisher: tjmhmdaarif
+PublisherUrl: https://github.com/tjmhmdaarif
+PackageDescription: A lightweight, offline-first voice dictation app for Windows built with Python, local Whisper speech-to-text, and a deterministic text-cleanup engine. Turns speech into clean text inside any application.
+PackageUrl: https://github.com/tjmhmdaarif/FlowMini
+PackageSourceUrl: https://github.com/tjmhmdaarif/FlowMini
+PackageLicenseUrl: https://github.com/tjmhmdaarif/FlowMini/blob/main/LICENSE
+ManifestType: Store
+ManifestVersion: 1.6.0
+PackageMoniker: FlowMini
+Tags:
+  - dictation
+  - speech-to-text
+  - voice
+  - windows
+  - accessibility
+ShortDescription: Offline voice dictation app for Windows (like Wispr Flow)
+PackageName: FlowMini
+PackageCommand: FlowMini.exe
+InstallerType: zip
+InstallerSwitches:
+  Silent: /silent
+  SilentWithProgress: /silent
+InstallerUrl: https://github.com/tjmhmdaarif/FlowMini/releases/download/v1.1.0.4/FlowMini-win64-1.1.0.4.zip
+InstallerSha256: placeholder
+PackageArchitecture: x64
+PackageSupportedEnvironmentOS:
+  - Windows10+
+PackageFileDependencies: []
+MinimumOSVersion: "10.0"
+PackageUrlLab: https://github.com/tjmhmdaarif/FlowMini
+PackageVerboseOutput: false
+Commands:
+  - FlowMini
+Protocols:
+  - flowmini
+Geodes:
+  - URL: https://github.com/tjmhmdaarif/FlowMini/releases
+    PackageName: FlowMini
+CheckPoints:
+  - URL: https://api.github.com/repos/tjmhmdaarif/FlowMini/releases/latest
+    ShouldExist: true
+PackageLocale: en-US
+AutomaticUpdateFeed: https://github.com/tjmhmdaarif/FlowMini/releases
+PackageUpdateSettings:
+  FeedUrl: https://github.com/tjmhmdaarif/FlowMini/releases
+  UpdateBehavior: Install
+  Channel: stable

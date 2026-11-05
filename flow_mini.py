@@ -947,6 +947,11 @@ class FlowMini:
         self._speech_seen = False
         self._started_at = None
 
+        # Day 7: Pre-load the fast streaming model in background
+        self._streaming_whisper = None
+        self._streaming_active = False
+        threading.Thread(target=self._load_streaming_whisper, daemon=True).start()
+
     def _emit(self, event, data=None):
         try:
             self.on_event(event, data)
@@ -1096,18 +1101,32 @@ class FlowMini:
             self._started_at = time.strftime("%Y-%m-%d %H:%M:%S")
             self._capture_target()
             self.recording = True
+            # Day 7: Reset streaming state for new recording
+            self._last_processed_length = 0
+            self._accumulated_text = ""
             if not self.stream:
                 self.start_stream()
             self._emit("recording_started")
+            # Day 7: Start background streaming thread (only if not already running)
+            if not hasattr(self, '_streaming_active') or not self._streaming_active:
+                self._streaming_active = True
+                print("[FlowMini] Starting real-time streaming worker thread")
+                threading.Thread(target=self._realtime_streaming_worker, daemon=True).start()
+            else:
+                print("[FlowMini] Real-time streaming worker already active")
 
     def stop_recording(self):
         with self.lock:
             if not self.recording:
                 return None
             self.recording = False
+            # Day 7: Stop real-time streaming worker
+            self._streaming_active = False
             return self._finalize("ptt")
 
     def _finalize(self, mode):
+        # Day 7: Stop real-time streaming
+        self._streaming_active = False
         if self.stream:
             try:
                 self.stream.stop()
@@ -1120,6 +1139,137 @@ class FlowMini:
         if not self.audio_frames:
             return None
         return np.concatenate(self.audio_frames, axis=0)
+
+    # -- Day 7: Real-time streaming worker ------------------------------------
+    def _load_streaming_whisper(self):
+        """Fast, lightweight Whisper model for real-time streaming partial transcripts.
+        Uses 'tiny' (or 'tiny.en') on CPU with greedy decoding for ~250-300ms latency.
+        """
+        if getattr(self, "_streaming_whisper", None) is not None:
+            return self._streaming_whisper
+        try:
+            from faster_whisper import WhisperModel
+            cpu_threads = min(4, os.cpu_count() or 4)
+            model_name = "tiny.en" if (self.language or "").startswith("en") and not self.detect_language else "tiny"
+            try:
+                # Try offline cache first (instant load, no network check)
+                self._streaming_whisper = WhisperModel(
+                    model_name,
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=cpu_threads,
+                    local_files_only=True
+                )
+            except Exception:
+                # Fall back to online download if not cached
+                self._streaming_whisper = WhisperModel(
+                    model_name,
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=cpu_threads
+                )
+            # Warm up internal CTranslate2 buffers with a dummy 0.1s frame
+            try:
+                dummy = np.zeros(1600, dtype=np.float32)
+                list(self._streaming_whisper.transcribe(dummy, beam_size=1, vad_filter=False)[0])
+            except Exception:
+                pass
+            print(f"[FlowMini] Real-time streaming Whisper model ({model_name}) ready")
+            return self._streaming_whisper
+        except Exception as exc:
+            print(f"[FlowMini] Streaming model load failed ({exc}) — trying tiny fallback")
+            try:
+                from faster_whisper import WhisperModel
+                self._streaming_whisper = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2)
+                return self._streaming_whisper
+            except Exception as e2:
+                print(f"[FlowMini] Streaming model fallback failed: {e2}")
+                return None
+
+    def _transcribe_partial(self, audio_data):
+        """Quick transcription of partial audio for real-time streaming.
+        Uses fast streaming model (tiny) with beam_size=1 and no VAD for low latency.
+        """
+        try:
+            model = self._load_streaming_whisper()
+            if model is None:
+                return None
+
+            audio = audio_data.astype(np.float32) / 32768.0
+            if len(audio) < 4000:
+                return None
+
+            lang = None
+            if not self.detect_language and re.match(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$", self.language or ""):
+                lang = self._whisper_lang(self.language)
+
+            task = "translate" if self.translate_english else "transcribe"
+
+            segments, info = model.transcribe(
+                audio,
+                language=lang,
+                task=task,
+                beam_size=1,
+                vad_filter=False,
+                condition_on_previous_text=False
+            )
+
+            text = " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
+            return text if text else None
+        except Exception as exc:
+            print(f"[FlowMini] Partial transcription error: {exc}")
+            return None
+
+    def _realtime_streaming_worker(self):
+        """Background worker that processes audio in real-time while recording.
+
+        This enables true streaming transcription - words appear DURING speech,
+        not after. Emits partial_transcript events as speech is detected.
+        """
+        print("[FlowMini] Real-time streaming worker started")
+        chunk_interval = 0.35  # Poll every 350ms
+        min_samples = 8000     # At least 0.5s of audio (16kHz)
+        last_emitted_text = ""
+
+        # Pre-warm streaming model
+        self._load_streaming_whisper()
+
+        while getattr(self, '_streaming_active', False):
+            try:
+                time.sleep(chunk_interval)
+
+                if not getattr(self, '_streaming_active', False):
+                    break
+
+                # Support both PTT recording and VAD active speech
+                current_audio = None
+                if self.recording:
+                    with self.lock:
+                        if self.audio_frames:
+                            current_audio = np.concatenate(self.audio_frames, axis=0)
+                elif self.vad_mode and getattr(self, '_speech_seen', False):
+                    if getattr(self, '_vad_buf', None):
+                        current_audio = np.concatenate(self._vad_buf, axis=0)
+
+                if current_audio is None or len(current_audio) < min_samples:
+                    continue
+
+                # Transcribe accumulated audio so far for progressive update
+                partial_text = self._transcribe_partial(current_audio)
+
+                if partial_text and partial_text != last_emitted_text:
+                    last_emitted_text = partial_text
+                    self._emit("partial_transcript", {
+                        "text": partial_text,
+                        "realtime": True,
+                        "timestamp": time.monotonic()
+                    })
+                    print(f"[FlowMini] Live streaming: \"{partial_text}\"")
+
+            except Exception as exc:
+                print(f"[FlowMini] Real-time streaming error: {exc}")
+
+        print("[FlowMini] Real-time streaming worker stopped")
 
     # -- combined push-to-talk toggle (used by hotkey handler) ---------------
     def toggle_ptt(self):
@@ -1174,18 +1324,24 @@ class FlowMini:
                 # users switch windows between sentences.
                 self._capture_target()
                 self._emit("recording_started")
+                # Day 7: Start real-time streaming worker for VAD utterance
+                if not getattr(self, '_streaming_active', False):
+                    self._streaming_active = True
+                    threading.Thread(target=self._realtime_streaming_worker, daemon=True).start()
             self._silence_start = None
             self._vad_buf.append(chunk)
         elif self._speech_seen:
             if self._silence_start is None:
                 self._silence_start = now
             elif now - self._silence_start >= self.cfg["vad_silence_gap_s"]:
+                self._streaming_active = False
                 audio = np.concatenate(self._vad_buf, axis=0) if self._vad_buf else None
                 self._speech_seen = False
                 self._vad_buf = []
                 print("[FlowMini][VAD] Utterance end detected — processing")
                 self._schedule_pipeline(audio, "vad")
             elif now - getattr(self, "_vad_started_mono", now) >= self.cfg["vad_max_utterance_s"]:
+                self._streaming_active = False
                 audio = np.concatenate(self._vad_buf, axis=0)
                 self._speech_seen = False
                 self._vad_buf = []
@@ -1456,6 +1612,12 @@ class FlowMini:
         try:
             import ctranslate2
             if ctranslate2.get_cuda_device_count() > 0:
+                if sys.platform == "win32":
+                    import ctypes
+                    try:
+                        ctypes.CDLL("cublas64_12.dll")
+                    except Exception:
+                        raise RuntimeError("CUDA device detected but cublas64_12.dll runtime is missing")
                 # Check CUDA actually works by querying supported compute types
                 # This avoids the "model.bin not found" error from trying to load a dummy model
                 supported = ctranslate2.get_supported_compute_types("cuda")
@@ -1665,23 +1827,7 @@ class FlowMini:
                 condition_on_previous_text=False,
                 **self._transcribe_kwargs())
 
-            # Day 7: Stream partial transcripts as segments arrive
-            partial_text = ""
-            segment_list = []
-            for segment in segments:
-                segment_list.append(segment)
-                segment_text = segment.text.strip()
-                if segment_text:
-                    partial_text = " ".join(s.text.strip() for s in segment_list).strip()
-                    # Emit partial transcript for live HUD update
-                    self._emit("partial_transcript", {
-                        "text": partial_text,
-                        "segment": segment_text,
-                        "timestamp": segment.start
-                    })
-                    time.sleep(0.05)  # Small delay to make updates visible
-
-            text = partial_text
+            text = " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
             self._last_detected_lang = info.language
             self._last_lang_conf = float(getattr(info, "language_probability", 0.0) or 0.0)
             print(f"[FlowMini] Whisper ASR in {time.monotonic() - t0:.1f}s "

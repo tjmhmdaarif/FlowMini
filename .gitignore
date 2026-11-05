@@ -26,6 +26,10 @@ models/
 build/
 dist/
 
+# React control panel
+web/node_modules/
+web/dist/
+
 # Editor / OS
 .vscode/
 .idea/

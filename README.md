@@ -234,7 +234,7 @@ One focused improvement per day:
   self-heal, live checkbox states incl. cleanup-mode radio submenu)
 - [x] **Day 5** — CI: the EXE builds automatically on every tag ✅
 - [x] **Day 6** — winget manifest (`winget install FlowMini`) ✅
-- [ ] Day 7 — streaming partial transcript (words appear while you speak)
+- [x] **Day 7** — streaming partial transcript (words appear while you speak) ✅
 
 ## 🔢 Build & release numbering
 
@@ -248,7 +248,8 @@ build:
 | Day 4 (today) | `v1.1.0.3` | auto-start with Windows + tray quick-menu |
 | Day 5 (today) | `v1.1.0.4` | CI: EXE builds automatically on every tag |
 | Day 6 | `v1.1.0.5` | winget manifest (`winget install FlowMini`) |
-| next builds | `v1.1.0.4` … `v1.1.0.12` | one number each, small or big |
+| Day 7 | `v1.1.0.6` | streaming partial transcript (words appear while you speak) |
+| next builds | `v1.1.0.7` … `v1.1.0.12` | one number each, small or big |
 | after `v1.1.0.12` | `v1.1.1.01`, then `v1.1.1.02`, … | minor bump rolls at 12 |
 
 `APP_VERSION` in `flowmini_app.py` is the single source of truth — the title
@@ -286,6 +287,7 @@ python tests_model_progress.py       # Day-2 model download progress (18 checks)
 python tests_single_instance.py      # single-instance mutex guard (7 checks)
 python tests_profiles.py             # Day-3 per-app profiles (58 checks)
 python tests_autostart.py            # Day-4 auto-start Run key (25 checks)
+python tests_streaming.py            # Day-7 real-time streaming partial transcript
 ```
 
 All six suites are orchestration-safe: they run offline (no microphone, no API key,

@@ -1501,6 +1501,13 @@ class FlowMiniApp:
             self._hud_show("loading", "first run downloads the model once (~1.5 GB)")
         elif event == "model_download":
             self._hud_show("loading", (data or {}).get("text") or "downloading model…")
+        elif event == "partial_transcript" and self.hud:
+            partial_text = (data or {}).get("text", "")
+            if partial_text:
+                if not self.hud.visible:
+                    self.hud.show("recording", partial_text)
+                else:
+                    self.hud.set_text(partial_text)
         elif event == "asr_text" and self.hud:
             self.hud.set_text((data.get("raw") or "") if data else "")
         elif event == "pasted":
@@ -1554,13 +1561,24 @@ class FlowMiniApp:
         elif event == "profile":
             self._handle_profile_event(data)
         elif event == "partial_transcript":
-            # Day 7: Streaming partial transcript - update HUD in real-time
+            # Day 7: Streaming partial transcript - update HUD and UI in real-time
             if data:
                 partial_text = data.get("text", "")
-                if partial_text and self.hud:
-                    self.hud.set_text(partial_text)
-                    # Also update the main window transcript in real-time
-                    self._set_transcript(partial_text, partial_text)
+                if partial_text:
+                    if self.hud:
+                        if not self.hud.visible:
+                            self.hud.show("recording", partial_text)
+                        else:
+                            self.hud.set_text(partial_text)
+                    # Update main window transcript text smoothly without typewriter reset
+                    if self._typewriter_job:
+                        try:
+                            self.root.after_cancel(self._typewriter_job)
+                        except Exception:
+                            pass
+                        self._typewriter_job = None
+                    self.transcript_text.config(text=partial_text, fg=TEXT_PRIMARY)
+                    self.transcript_raw.config(text="Live partial transcript…")
         elif event == "asr_text":
             # Raw transcript is ready (~1s) — show it instantly so the UI never
             # feels frozen while cleaning finishes in the background.

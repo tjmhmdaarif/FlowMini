@@ -1664,7 +1664,24 @@ class FlowMini:
                 vad_filter=True, vad_parameters=VAD_PARAMS,
                 condition_on_previous_text=False,
                 **self._transcribe_kwargs())
-            text = " ".join(s.text.strip() for s in segments).strip()
+
+            # Day 7: Stream partial transcripts as segments arrive
+            partial_text = ""
+            segment_list = []
+            for segment in segments:
+                segment_list.append(segment)
+                segment_text = segment.text.strip()
+                if segment_text:
+                    partial_text = " ".join(s.text.strip() for s in segment_list).strip()
+                    # Emit partial transcript for live HUD update
+                    self._emit("partial_transcript", {
+                        "text": partial_text,
+                        "segment": segment_text,
+                        "timestamp": segment.start
+                    })
+                    time.sleep(0.05)  # Small delay to make updates visible
+
+            text = partial_text
             self._last_detected_lang = info.language
             self._last_lang_conf = float(getattr(info, "language_probability", 0.0) or 0.0)
             print(f"[FlowMini] Whisper ASR in {time.monotonic() - t0:.1f}s "

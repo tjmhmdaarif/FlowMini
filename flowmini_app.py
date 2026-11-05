@@ -262,8 +262,8 @@ FONT_BASE = {
 FONTS = dict(FONT_BASE)  # refined in FlowMiniApp.__init__ via _init_fonts()
 
 #: App version shown in the UI and shipped on GitHub releases.
-APP_VERSION = "1.1.0.5"  # build numbering: 1.1.0.N rises with every build,
-                          # N=4 today (Day 5 build: CI auto-build); N=12 last, then 1.1.1.01+
+APP_VERSION = "1.1.0.6"  # build numbering: 1.1.0.N rises with every build,
+                          # Day 7: streaming partial transcript
 
 
 def _init_fonts():
@@ -1553,6 +1553,14 @@ class FlowMiniApp:
             self.log("Still processing previous dictation — press again in a moment", "dim")
         elif event == "profile":
             self._handle_profile_event(data)
+        elif event == "partial_transcript":
+            # Day 7: Streaming partial transcript - update HUD in real-time
+            if data:
+                partial_text = data.get("text", "")
+                if partial_text and self.hud:
+                    self.hud.set_text(partial_text)
+                    # Also update the main window transcript in real-time
+                    self._set_transcript(partial_text, partial_text)
         elif event == "asr_text":
             # Raw transcript is ready (~1s) — show it instantly so the UI never
             # feels frozen while cleaning finishes in the background.

@@ -652,8 +652,10 @@ class FlowMiniApp:
         self.root.title("FlowMini — Voice Dictation")
         self.root.geometry("544x990")   # tall enough for every section at once
         self.root.minsize(400, 560)   # small enough for quarter-screen snaps
+        # App version embedded in window title
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
+        # Version bump for Day 8 release: v1.1.0.7
 
         _init_fonts()
         self._setup_ttk()

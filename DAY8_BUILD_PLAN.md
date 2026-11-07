@@ -78,6 +78,13 @@ WebSocket bridge — no online hosting, everything runs natively.
 
 | # | Item | Status | How to verify |
 |---|---|---|---|
+| 1 | `config.json` bridge config + parser | ✅ updated `ui_host`/`ui_port` | read `config.json`; bridge honours `ui_address`/`ui_port` |
+| 2 | Version bump `v1.1.0.7` in `flowmini_app.py` | ✅ version string updated | `grep APP_VERSION` → `v1.1.0.7` |
+| 3 | Engine integration test (real `flow_mini` engine, not mock) | ❌ missing | run real engine + bridge; `test_client` receives engine events |
+| 4 | Mic device enumeration → real engine | ❌ placeholder | list input devices; bridge exposes `mic_device` setting |
+| 5 | `undo()` / raw recall wired to real engine | ❌ mock only | real engine supports `undo` |
+| 6 | PyInstaller packaging to embed UI | ❌ not started | build `flowmini_ui` + test desktop run |
+| 7 | `v1.1.0.7` release tag / changelog | ❌ missing | `git tag v1.1.0.7` + CHANGELOG entry |
 | 1 | `config.json` bridge config + parser | ❌ missing | read `config.json`; bridge honours `ui_address`/`ui_port` |
 | 2 | Version bump `v1.1.0.7` in `flowmini_app.py` | ❌ missing | `grep APP_VERSION` → `v1.1.0.7` |
 | 3 | Engine integration test (real `flow_mini` engine, not mock) | ❌ missing | run real engine + bridge; `test_client` receives engine events |

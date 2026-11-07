@@ -1,262 +1,239 @@
-export type EngineStatus =
-  | "idle"
-  | "recording"
-  | "processing"
-  | "pasted"
-  | "vad";
-
+export type Status = "idle" | "recording" | "processing" | "vad" | "error";
+export type Tag = "ok" | "warn" | "err" | "dim";
 export type CleanupMode = "off" | "light" | "medium";
 export type StylePreset = "formal" | "casual" | "very_casual" | "excited";
-export type LogLevel = "ok" | "warn" | "err" | "dim";
 
-export type LogLine = {
-  id: number;
-  t: string;
-  level: LogLevel;
-  text: string;
-};
+export type Edit = { type: string; source?: string; replacement?: string };
 
 export type Settings = {
   language: string;
-  translateToEnglish: boolean;
-  cleanupMode: CleanupMode;
-  stylePreset: StylePreset;
-  developerMode: boolean;
-  profilesEnabled: boolean;
-  autostart: boolean;
-  showHud: boolean;
-  vadArmed: boolean;
+  cleanup: CleanupMode;
+  style: StylePreset;
+  translate: boolean;
+  developer: boolean;
+  vad: boolean;
+  /** Day 8: local STT model / device (live streaming model). */
+  stt_model: string;
+  stt_device: string;
+  mic_device: string;
 };
 
-export type EngineState = {
-  status: EngineStatus;
-  modeLabel: string;
-  transcript: string;
-  heard: string;
-  canUndo: boolean;
-  profile: "code" | "mail" | null;
+export type LogLine = { id: number; text: string; tag: Tag };
+
+export type State = {
+  status: Status;
   level: number;
+  partial: string;
+  final: string;
+  raw: string;
+  language: string;
+  confidence: number;
+  edits: Edit[];
+  latencyMs: number;
+  sessions: number;
+  words: number;
   settings: Settings;
-  log: LogLine[];
-  stats: string;
-  hudVisible: boolean;
+  logs: LogLine[];
+  connected: boolean;
+  sheetOpen: boolean;
+  canUndo: boolean;
 };
 
-export const LANGUAGES = [
-  "English (US)",
-  "English (UK)",
-  "Hindi",
-  "Kannada",
-  "Spanish",
-  "French",
-  "German",
-  "Japanese",
-] as const;
+export const STATUS_META: Record<Status, { label: string; hint: string; tone: string }> = {
+  idle: {
+    label: "IDLE",
+    hint: "ready — press Ctrl+Alt+D or hit the disc",
+    tone: "#38e08b",
+  },
+  recording: {
+    label: "LISTENING",
+    hint: "speak now — press again to finish the take",
+    tone: "#ff3b4e",
+  },
+  processing: {
+    label: "CLEANING",
+    hint: "transcribing and running the cleanup pass",
+    tone: "#ffb02e",
+  },
+  vad: {
+    label: "ARMED",
+    hint: "hands-free — starts on speech, stops on silence",
+    tone: "#5aa9ff",
+  },
+  error: {
+    label: "FAULT",
+    hint: "adapter reported an error — see the log",
+    tone: "#ff6b7d",
+  },
+};
 
-const SAMPLES: { clean: string; heard: string; profile: "code" | "mail" | null }[] = [
-  {
-    clean: "Let's fix the tokenizer.",
-    heard: "heard (en · 97%): um let's fix the the parser no the tokenizer",
-    profile: null,
-  },
-  {
-    clean: "import os",
-    heard: "heard (en · 94%): import os",
-    profile: "code",
-  },
-  {
-    clean: "Please send the agenda before noon.",
-    heard: "heard (en · 96%): please send the agenda before noon",
-    profile: "mail",
-  },
+export const LANGUAGES: { code: string; label: string }[] = [
+  { code: "en-US", label: "English (US)" },
+  { code: "en-GB", label: "English (UK)" },
+  { code: "hi-IN", label: "Hindi" },
+  { code: "bn-IN", label: "Bengali" },
+  { code: "ta-IN", label: "Tamil" },
+  { code: "te-IN", label: "Telugu" },
+  { code: "mr-IN", label: "Marathi" },
+  { code: "gu-IN", label: "Gujarati" },
+  { code: "kn-IN", label: "Kannada" },
+  { code: "ml-IN", label: "Malayalam" },
+  { code: "pa-IN", label: "Punjabi" },
+  { code: "ur-PK", label: "Urdu" },
+  { code: "ne-NP", label: "Nepali" },
+  { code: "es-ES", label: "Spanish" },
+  { code: "fr-FR", label: "French" },
+  { code: "de-DE", label: "German" },
+  { code: "ja-JP", label: "Japanese" },
+  { code: "ko-KR", label: "Korean" },
+  { code: "zh-CN", label: "Chinese (Simplified)" },
+  { code: "ar-SA", label: "Arabic" },
 ];
 
-let logSeq = 1;
+let seq = 1;
 
-export function nowStamp() {
-  return new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
-export function line(level: LogLevel, text: string): LogLine {
-  return { id: logSeq++, t: nowStamp(), level, text };
-}
-
-export const initialState: EngineState = {
+export const initialState: State = {
   status: "idle",
-  modeLabel: "push-to-talk",
-  transcript: "nothing dictated yet",
-  heard: "",
-  canUndo: false,
-  profile: null,
-  level: 0.08,
+  level: 0,
+  partial: "",
+  final: "",
+  raw: "",
+  language: "en-US",
+  confidence: 0,
+  edits: [],
+  latencyMs: 0,
+  sessions: 0,
+  words: 0,
   settings: {
-    language: "English (US)",
-    translateToEnglish: true,
-    cleanupMode: "medium",
-    stylePreset: "casual",
-    developerMode: false,
-    profilesEnabled: true,
-    autostart: true,
-    showHud: true,
-    vadArmed: false,
+    language: "en-US",
+    cleanup: "light",
+    style: "casual",
+    translate: true,
+    developer: false,
+    vad: false,
+    stt_model: "large-v3-turbo",
+    stt_device: "auto",
+    mic_device: "",
   },
-  log: [
-    line("ok", "UI shell ready. Python engine is not wired yet."),
-    line("dim", "Click the disc or press Ctrl+Alt+D to demo a take."),
-    line("ok", "Hotkey chips match the desktop app."),
-  ],
-  stats: "demo  4 takes  61 words  1.4s median",
-  hudVisible: false,
+  logs: [],
+  connected: false,
+  sheetOpen: false,
+  canUndo: false,
 };
 
 export type Action =
-  | { type: "toggle_ptt" }
-  | { type: "set_status"; status: EngineStatus }
-  | { type: "finish"; sampleIndex: number }
-  | { type: "set_level"; level: number }
-  | { type: "patch_settings"; patch: Partial<Settings> }
-  | { type: "log"; level: LogLevel; text: string }
-  | { type: "undo" }
-  | { type: "self_test" }
-  | { type: "refresh_stats" }
-  | { type: "hide_hud" };
+  | { type: "status"; status: Status }
+  | { type: "level"; level: number }
+  | { type: "partial"; text: string }
+  | {
+      type: "result";
+      raw: string;
+      final: string;
+      language?: string;
+      confidence?: number;
+      edits?: Edit[];
+      latencyMs?: number;
+    }
+  | { type: "undo"; text: string }
+  | { type: "log"; text: string; tag?: Tag }
+  | { type: "settings"; patch: Partial<Settings> }
+  | { type: "connected"; value: boolean }
+  | { type: "sheet"; open: boolean }
+  | { type: "reset" };
 
-export function reducer(state: EngineState, action: Action): EngineState {
+const withLog = (logs: LogLine[], text: string, tag: Tag = "dim"): LogLine[] =>
+  [...logs, { id: seq++, text, tag }].slice(-120);
+
+export function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "toggle_ptt": {
-      if (state.status === "recording") {
-        return {
-          ...state,
-          status: "processing",
-          modeLabel: "cleanup",
-          hudVisible: state.settings.showHud,
-          log: [line("dim", "Hold ended. Running cleanup."), ...state.log].slice(0, 40),
-        };
-      }
-      if (state.status === "processing") return state;
+    case "status":
       return {
         ...state,
-        status: "recording",
-        modeLabel: "push-to-talk",
-        hudVisible: state.settings.showHud,
-        log: [line("ok", "Mic open. Speak, then click again to paste."), ...state.log].slice(0, 40),
+        status: action.status,
+        logs: withLog(
+          state.logs,
+          `state → ${STATUS_META[action.status].label.toLowerCase()}`,
+          action.status === "error" ? "err" : "dim",
+        ),
       };
-    }
-    case "set_status":
-      return { ...state, status: action.status };
-    case "finish": {
-      const sample = SAMPLES[action.sampleIndex % SAMPLES.length];
-      const useCode = state.settings.developerMode || sample.profile === "code";
-      const text = useCode && sample.profile === "code" ? sample.clean : sample.clean;
-      const profile = state.settings.profilesEnabled ? sample.profile : null;
+
+    case "level":
+      return { ...state, level: Math.max(0, Math.min(1, action.level)) };
+
+    case "partial":
+      return { ...state, partial: action.text };
+
+    case "result": {
+      const words = action.final.split(/\s+/).filter(Boolean).length;
       return {
         ...state,
-        status: "pasted",
-        modeLabel: "pasted",
-        transcript: text,
-        heard: sample.heard,
-        canUndo: true,
-        profile,
-        hudVisible: state.settings.showHud,
-        log: [
-          line("ok", `Pasted ${text.split(" ").length} words into the focused field.`),
-          ...state.log,
-        ].slice(0, 40),
+        status: state.settings.vad ? "vad" : "idle",
+        partial: "",
+        final: action.final,
+        raw: action.raw,
+        language: action.language ?? state.language,
+        confidence: action.confidence ?? 0,
+        edits: action.edits ?? [],
+        latencyMs: action.latencyMs ?? 0,
+        sessions: state.sessions + 1,
+        words: state.words + words,
+        canUndo: action.raw.trim() !== action.final.trim(),
+        logs: withLog(
+          state.logs,
+          `${words} words · ${action.latencyMs ?? 0} ms · ${(action.edits ?? []).length} edit(s)`,
+          "ok",
+        ),
       };
     }
-    case "set_level":
-      return { ...state, level: action.level };
-    case "patch_settings": {
-      const settings = { ...state.settings, ...action.patch };
-      let extra: Partial<EngineState> = {};
-      if (action.patch.vadArmed === true) {
-        extra = {
-          status: "vad",
-          modeLabel: "hands-free",
-        };
-      }
-      if (action.patch.vadArmed === false && state.status === "vad") {
-        extra = { status: "idle", modeLabel: "push-to-talk" };
-      }
-      return {
-        ...state,
-        settings,
-        ...extra,
-        log: [
-          line("dim", describePatch(action.patch)),
-          ...state.log,
-        ].slice(0, 40),
-      };
-    }
-    case "log":
-      return { ...state, log: [line(action.level, action.text), ...state.log].slice(0, 40) };
+
     case "undo":
-      if (!state.canUndo) return state;
       return {
         ...state,
-        transcript: state.heard.replace(/^heard[^:]*:\s*/i, "") || "raw take restored",
+        final: action.text,
+        edits: [],
         canUndo: false,
-        status: "idle",
-        modeLabel: "push-to-talk",
-        log: [line("warn", "Undo: restored the raw take."), ...state.log].slice(0, 40),
+        logs: withLog(state.logs, "raw transcript restored", "warn"),
       };
-    case "self_test":
+
+    case "log":
+      return { ...state, logs: withLog(state.logs, action.text, action.tag ?? "dim") };
+
+    case "settings":
       return {
         ...state,
-        log: [
-          line("ok", "Self-test: mic path, paste path, HUD timeout. All green (demo)."),
-          ...state.log,
-        ].slice(0, 40),
+        settings: { ...state.settings, ...action.patch },
+        status:
+          action.patch.vad !== undefined && state.status === "idle"
+            ? action.patch.vad
+              ? "vad"
+              : "idle"
+            : state.status,
       };
-    case "refresh_stats":
+
+    case "connected":
       return {
         ...state,
-        stats: `demo  ${4 + (state.log.length % 5)} takes  ${58 + state.log.length} words  1.3s median`,
-        log: [line("dim", "Session stats refreshed from local demo store."), ...state.log].slice(0, 40),
+        connected: action.value,
+        logs: withLog(
+          state.logs,
+          action.value ? "adapter attached" : "no adapter attached",
+          action.value ? "ok" : "warn",
+        ),
       };
-    case "hide_hud":
-      return { ...state, hudVisible: false };
+
+    case "sheet":
+      return { ...state, sheetOpen: action.open };
+
+    case "reset":
+      return {
+        ...initialState,
+        settings: state.settings,
+        logs: withLog(state.logs, "preview data cleared", "dim"),
+        sessions: state.sessions,
+        words: state.words,
+      };
+
     default:
       return state;
-  }
-}
-
-function describePatch(patch: Partial<Settings>): string {
-  const [key, value] = Object.entries(patch)[0] ?? ["setting", ""];
-  return `${key} → ${String(value)}`;
-}
-
-export function statusTone(status: EngineStatus): string {
-  switch (status) {
-    case "recording":
-      return "status-live";
-    case "processing":
-      return "status-wait";
-    case "vad":
-      return "status-info";
-    case "pasted":
-      return "status-ok";
-    default:
-      return "status-idle";
-  }
-}
-
-export function statusWord(status: EngineStatus): string {
-  switch (status) {
-    case "recording":
-      return "LIVE";
-    case "processing":
-      return "CLEANUP";
-    case "vad":
-      return "ARMED";
-    case "pasted":
-      return "PASTED";
-    default:
-      return "IDLE";
   }
 }

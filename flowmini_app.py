@@ -38,6 +38,7 @@ from ctypes import wintypes
 import flow_mini
 from flow_mini import FlowMini, load_config, init_db
 import autostart
+from core.websocket_bridge import FlowMiniBridge
 
 # ===========================================================================
 # Heard-line formatting — pronunciation + optional original script / meaning
@@ -1133,7 +1134,17 @@ class FlowMiniApp:
     # ------------------------------------------------------------ hotkeys ---
     def _register_hotkeys(self):
         self.core = FlowMini(self.config, self.db,
-                             on_event=self._on_core_event, on_level=self.on_level)
+                             # Engine -> callbacks that push events down the
+                             # Day-8 WebSocket bridge, in addition to updating
+                             # the Tkinter UI.
+                             on_event=self._engine_event,
+                             on_level=self._engine_level)
+
+        # Start the Day-8 WebSocket bridge server in a background thread.
+        self.ui_host = self.config.get("ui_host", "127.0.0.1")
+        self.ui_port = int(self.config.get("ui_port", 8765))
+        self.bridge = FlowMiniBridge(self.core, self.ui_host, self.ui_port)
+        threading.Thread(target=self.bridge.start, daemon=True).start()
         # Never treat our own window as a paste target.
         try:
             self.core.own_hwnd = user32.GetAncestor(self.root.winfo_id(), 2)  # GA_ROOT
@@ -1445,6 +1456,17 @@ class FlowMiniApp:
 
     def _on_core_event(self, event, data=None):
         self.ui_queue.put(("core_event", event, data))
+
+    def _engine_event(self, event, data=None):
+        """Engine event: keep the Tkinter UI in sync and stream the same event
+        down the Day-8 WebSocket bridge."""
+        self._on_core_event(event, data)
+        self.bridge.broadcast(event, data)
+
+    def _engine_level(self, rms, active):
+        """Mic level: update the Tkinter waveform/HUD and stream it to the UI."""
+        self.on_level(rms, active)
+        self.bridge.broadcast_level(rms, active)
 
     # ----------------------------------------------------------------- HUD --
     def _hud_show(self, state, text=None):

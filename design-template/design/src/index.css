@@ -1,0 +1,192 @@
+@import "tailwindcss";
+@import "@fontsource-variable/outfit";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/instrument-serif";
+@import "@fontsource/instrument-serif/400-italic.css";
+
+@theme {
+  --color-ink: #f5f7fc;
+  --color-body: #a4aec2;
+  --color-mute: #5a6478;
+  --color-ok: #4ade9b;
+  --color-warn: #ffb02e;
+  --color-bad: #ff6b7d;
+  --color-accent: #ff3b4e;
+  --color-info: #6aa8ff;
+  --color-shell: #05060a;
+
+  --font-sans: "Outfit Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "Consolas", ui-monospace, monospace;
+  --font-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100dvh;
+}
+
+body {
+  margin: 0;
+  background: var(--color-shell);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------- labels -- */
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.3);
+}
+
+/* ------------------------------------------------------------- atmosphere -- */
+
+.aura {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      62% 48% at 50% -6%,
+      color-mix(in srgb, var(--tone, #ff3b4e) 20%, transparent) 0%,
+      transparent 68%
+    ),
+    radial-gradient(42% 36% at 86% 96%, rgb(106 168 255 / 0.08) 0%, transparent 70%),
+    radial-gradient(46% 40% at 6% 88%, rgb(255 59 78 / 0.06) 0%, transparent 70%);
+  filter: blur(14px);
+  animation: drift 24s ease-in-out infinite alternate;
+}
+
+.stage-light {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(58% 34% at 50% -6%, rgb(255 255 255 / 0.07) 0%, transparent 72%);
+}
+
+.vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(72% 62% at 50% 42%, transparent 38%, rgb(3 4 7 / 0.9) 100%);
+}
+
+/* Cursor-tracked light. --mx / --my are set on the frame element. */
+.pointer-light::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(
+    460px circle at var(--mx, 50%) var(--my, 18%),
+    color-mix(in srgb, var(--tone, #ff3b4e) 10%, transparent) 0%,
+    transparent 62%
+  );
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 31;
+  pointer-events: none;
+  opacity: 0.032;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Instrument ruler under the masthead. */
+.ruler {
+  height: 6px;
+  background-image: repeating-linear-gradient(
+    to right,
+    rgb(255 255 255 / 0.16) 0 1px,
+    transparent 1px 10px
+  );
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+
+/* Streaming caret after the live transcript. */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.78em;
+  margin-left: 4px;
+  transform: translateY(0.04em);
+  background: var(--color-accent);
+  animation: blink 1.05s steps(2, end) infinite;
+}
+
+.slow-spin {
+  animation: spin 110s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+.orbit {
+  animation: spin 44s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+/* -------------------------------------------------------------- keyframes -- */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes signal {
+  0%,
+  100% {
+    transform: scaleY(0.32);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(-1.4%, -0.8%, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(1.4%, 1.4%, 0) scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,9 +1,9 @@
 PackageName: FlowMini
-PackageVersion: 1.1.0.4
+PackageVersion: 1.1.1.0
 PackageAlias: tjmhmdaarif.FlowMini
 Publisher: tjmhmdaarif
 PublisherUrl: https://github.com/tjmhmdaarif
-PackageDescription: A lightweight, offline-first voice dictation app for Windows built with Python, local Whisper speech-to-text, and a deterministic text-cleanup engine. Turns speech into clean text inside any application.
+PackageDescription: A lightweight, offline-first voice dictation app for Windows built with Python, local Whisper speech-to-text, and a deterministic text-cleanup engine. Turns speech into clean text inside any application. New in 1.1.1.0: winget manifest, streaming partial transcript, enhanced HUD, voice snippets v2, multi-mic support, auto-learn improvements, build optimizations.
 PackageUrl: https://github.com/tjmhmdaarif/FlowMini
 PackageSourceUrl: https://github.com/tjmhmdaarif/FlowMini
 PackageLicenseUrl: https://github.com/tjmhmdaarif/FlowMini/blob/main/LICENSE
@@ -16,14 +16,15 @@ Tags:
   - voice
   - windows
   - accessibility
-ShortDescription: Offline voice dictation app for Windows (like Wispr Flow)
+  - offline-first
+ShortDescription: Offline voice dictation app for Windows (like Wispr Flow) — v1.1.1.0 release
 PackageName: FlowMini
 PackageCommand: FlowMini.exe
 InstallerType: zip
 InstallerSwitches:
   Silent: /silent
   SilentWithProgress: /silent
-InstallerUrl: https://github.com/tjmhmdaarif/FlowMini/releases/download/v1.1.0.4/FlowMini-win64-1.1.0.4.zip
+InstallerUrl: https://github.com/tjmhmdaarif/FlowMini/releases/download/v1.1.1.0/FlowMini-win64-1.1.1.0.zip
 InstallerSha256: placeholder
 PackageArchitecture: x64
 PackageSupportedEnvironmentOS:

@@ -897,7 +897,8 @@ class FlowMini:
             self.style_preset = "casual"
         self.dictionary = load_dictionary()
         self.snippet_manager = SnippetManager(get_snippets_path(BASE_DIR))
-        self.auto_learner = AutoLearner(os.path.join(BASE_DIR, "auto_learn_corrections.json"))
+        min_count = int(config.get("auto_learn_min_count", 3))
+        self.auto_learner = AutoLearner(os.path.join(BASE_DIR, "auto_learn_corrections.json"), min_suggest_count=min_count)
         self.auto_learn_enabled = bool(config.get("auto_learn", True))
         self.developer_mode = bool(config.get("developer_mode", False))
 

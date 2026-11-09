@@ -21,5 +21,15 @@
   "detect_language": false,
   "translate_to_english": true,
   "start_with_windows": true,
-  "language": "en-US"
+  "language": "en-US",
+  "auto_learn_min_count": 3,
+  "ui_host": "127.0.0.1",
+  "ui_port": 8765,
+  "vad_enabled": false,
+  "mic_device": "",
+  "app_profiles_enabled": true,
+  "start_with_windows": true,
+  "show_hud": true,
+  "detect_language": false,
+  "auto_learn": true
 }

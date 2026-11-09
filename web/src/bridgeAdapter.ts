@@ -72,7 +72,8 @@ function callBridgeAPI(method: string, args: any[] = []): any {
  * Hook that polls the BridgeAPI for status + config updates.
  *
  * The hook runs a setInterval that calls:
- *   - get_status() every 150ms → dispatches {type: "status", status} and {type: "level", level}
+ *   - get_status() every 150ms → dispatches {type: "status", status}, {type: "level", level},
+ *     and {type: "partial", text} with the latest partial transcript
  *   - get_config() once on first poll → dispatches settings patch
  *
  * Dispatches to the React reducer via the provided dispatch function.
@@ -104,6 +105,11 @@ function useBridgePolling(dispatch: any, deps: any[] = []) {
           dispatch({
             type: "connected",
             value: status.status !== "error" && status.status !== "idle",
+          });
+          // Day 2: forward partial transcript
+          dispatch({
+            type: "partial",
+            text: status.partial_transcript ?? "",
           });
         }
 

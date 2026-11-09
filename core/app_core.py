@@ -50,8 +50,9 @@ from PIL import Image, ImageDraw
 # ---------------------------------------------------------------------------
 
 if getattr(sys, "frozen", False):
-    # PyInstaller: keep everything next to the exe
-    BASE_DIR = Path(sys._MEIPASS)
+    # PyInstaller: keep config/DB next to the exe so settings persist across
+    # runs (sys._MEIPASS is a temp dir that is deleted on exit).
+    BASE_DIR = Path(sys.executable).parent
 else:
     # Development: project root
     BASE_DIR = Path(__file__).parent.parent.parent
@@ -89,7 +90,9 @@ def load_config() -> dict:
         "start_with_windows": False,
         "language": "en-US",
         "ui_host": "127.0.0.1",
-        "ui_port": 9876,
+        "ui_port": 8765,
+        "vad_enabled": False,
+        "mic_device": "",
     }
     if CONFIG_PATH.exists():
         try:
@@ -267,7 +270,7 @@ class AudioCapture:
                     if not self.stop_event.is_set():
                         self.on_chunk(np.frombuffer(data, dtype=self.DTYPE))
                 except Exception:
-                    if not self.stop_event.is.set():
+                    if not self.stop_event.is_set():
                         raise
             self._stream.stop()
             self._stream.close()
@@ -468,10 +471,10 @@ class AppCoreManager:
         self._stop_all = threading.Event()
 
         # Components
-        self.whisper: Optional[WhisperEngine] = None
         self.audio_capture: Optional[AudioCapture] = None
         self.hotkey_listener: Optional[HotkeyListener] = None
         self.tray: Optional[SystemTray] = None
+        self.hotkey_win = None
 
         # Events queued for the bridge (React UI)
         self._event_queue: "queue.Queue[dict]" = queue.Queue()
@@ -480,6 +483,7 @@ class AppCoreManager:
         # Transcription history (last N sessions)
         self._history: List[dict] = []
         self._max_history = 50
+        self._last_raw: Optional[str] = None
 
         # Thread safety
         self._lock = threading.Lock()
@@ -489,6 +493,73 @@ class AppCoreManager:
 
         # Dictation thread reference
         self._dictation_thread: Optional[threading.Thread] = None
+
+        # The real engine (flow_mini.FlowMini) — owns audio capture, ASR,
+        # hotkeys, paste, and the session DB. AppCoreManager is a thin shim that
+        # adapts it to the BridgeAPI/js_api surface.
+        self.db = None
+        self.engine = None
+        try:
+            from flow_mini import FlowMini, init_db
+            from flow_mini import load_config as load_engine_config
+            # The engine's loader adds api_key / env fallbacks that
+            # core.app_core.load_config() does not.
+            self.config = load_engine_config()
+            self.db = init_db()
+            self.engine = FlowMini(
+                self.config,
+                self.db,
+                on_event=self._on_engine_event,
+                on_level=self._on_engine_level,
+            )
+        except Exception as exc:
+            print(f"[AppCore] Could not create FlowMini engine: {exc}")
+
+    # -----------------------------------------------------------------
+    # Engine callbacks
+    # -----------------------------------------------------------------
+
+    def _on_engine_event(self, event: str, data=None) -> None:
+        """Translate FlowMini engine events into bridge events."""
+        mapping = {
+            "recording_started": {"type": "status", "status": "recording"},
+            "recording_stopped": {"type": "status", "status": "processing"},
+            "idle": {"type": "status", "status": "idle"},
+            "busy": {"type": "status", "status": "processing"},
+            "processing": {"type": "status", "status": "processing"},
+            "partial_transcript": {"type": "partial", "text": data or ""},
+            "asr_text": {"type": "asr_text", "text": data or ""},
+            "pasted": {"type": "log", "text": "Transcript pasted", "tag": "ok"},
+            "paste_failed": {"type": "log", "text": "Paste failed", "tag": "err"},
+            "vad_on": {"type": "log", "text": "Hands-free VAD on", "tag": "ok"},
+            "vad_off": {"type": "log", "text": "Hands-free VAD off", "tag": "dim"},
+            "whisper_loading": {"type": "log", "text": "Loading Whisper model…", "tag": "dim"},
+            "whisper_ready": {"type": "log", "text": "Whisper ready", "tag": "ok"},
+            "model_download": {"type": "log", "text": "Downloading model…", "tag": "dim"},
+        }
+        mapped = mapping.get(event)
+        if mapped is not None:
+            self._emit_event(mapped)
+        else:
+            self._emit_event({"type": event, "data": data or {}})
+        # Track completed sessions for the history view.
+        if event in ("pasted", "asr_text"):
+            self.add_to_history({
+                "timestamp": time.time(),
+                "raw": data or "",
+                "mode": "ptt",
+            })
+        # Remember the raw transcript so "Undo raw" can re-paste it.
+        if event == "asr_text" and data:
+            self._last_raw = data
+
+    def _on_engine_level(self, rms: float, active: bool = False) -> None:
+        self._rms_level = float(rms or 0.0)
+        self._emit_event({
+            "type": "level",
+            "level": round(self._rms_level, 3),
+            "active": bool(active),
+        })
 
     # -----------------------------------------------------------------
     # Lifecycle
@@ -502,23 +573,16 @@ class AppCoreManager:
         self._stop_all.clear()
 
         try:
-            # 1. Load Whisper model
-            self._init_whisper()
+            if self.engine is None:
+                raise RuntimeError("FlowMini engine is not available")
 
-            # 2. Start audio capture
-            self.audio_capture = AudioCapture(on_chunk=self._on_audio_chunk, stop_event=self._stop_all)
-            self.audio_capture.start()
+            # 1. Start the audio stream (real capture + VAD feed).
+            self.engine.start_stream()
 
-            # 3. Start hotkey listener
-            self.hotkey_listener = HotkeyListener(
-                on_trigger=self._on_hotkey_trigger,
-                on_vad=self._on_hotkey_vad,
-                trigger_key=self.config.get("trigger_key", "ctrl+alt+d"),
-                vad_key=self.config.get("vad_trigger_key", "ctrl+alt+f"),
-            )
-            self.hotkey_listener.start()
+            # 2. Register global hotkeys on a dedicated message-only window.
+            self._start_hotkeys()
 
-            # 4. System tray
+            # 3. System tray
             icon_path = BASE_DIR / "flowmini.ico" if (BASE_DIR / "flowmini.ico").exists() else None
             self.tray = SystemTray(
                 title="FlowMini",
@@ -528,11 +592,11 @@ class AppCoreManager:
             )
             self.tray.run()
 
-            # 5. Emit startup event to UI (via bridge if available)
+            # 4. Emit startup event to UI (via bridge if available)
             self._emit_event({
                 "type": "status",
                 "status": "idle",
-                "model": self.whisper.model_name if self.whisper else "loading",
+                "model": self.config.get("stt_model", "large-v3-turbo"),
                 "level": 0.0,
                 "uptime": time.time(),
             })
@@ -545,14 +609,55 @@ class AppCoreManager:
             print(f"[AppCore] Failed to start: {exc}")
             raise
 
+    def _start_hotkeys(self) -> None:
+        """Register Ctrl+Alt+D / Ctrl+Alt+F via the real engine's hotkey window."""
+        try:
+            from flowmini_app import _HotkeyWindow
+        except Exception as exc:
+            print(f"[AppCore] Hotkey window unavailable: {exc}")
+            return
+        MOD_CONTROL = 0x0002
+        MOD_ALT = 0x0001
+        MOD_NOREPEAT = 0x4000
+        VK_D = 0x44
+        VK_F = 0x46
+        specs = [
+            (1, "Push-to-talk", MOD_CONTROL | MOD_ALT, VK_D),
+            (2, "Hands-free VAD", MOD_CONTROL | MOD_ALT, VK_F),
+        ]
+        self.hotkey_win = _HotkeyWindow(
+            specs,
+            self._on_hotkey_registered,
+            self._on_hotkey,
+        )
+
+    def _on_hotkey_registered(self, hotkey_id, label, ok) -> None:
+        print(f"[AppCore] Hotkey {label}: {'registered' if ok else 'FAILED'}")
+
+    def _on_hotkey(self, hotkey_id) -> None:
+        if hotkey_id == 1:
+            self._toggle_recording()
+        elif hotkey_id == 2:
+            self._toggle_vad()
+
     def stop(self) -> None:
         """Clean shutdown of all services."""
         self._running = False
         self._stop_all.set()
 
-        if self.audio_capture:
-            self.audio_capture.stop()
-            self.audio_capture = None
+        if self.engine is not None:
+            try:
+                if self.engine.recording:
+                    self.engine.stop_recording()
+            except Exception:
+                pass
+
+        if self.hotkey_win is not None:
+            try:
+                self.hotkey_win.close()
+            except Exception:
+                pass
+            self.hotkey_win = None
 
         if self.hotkey_listener:
             self.hotkey_listener.stop()
@@ -562,19 +667,15 @@ class AppCoreManager:
             self.tray.stop()
             self.tray = None
 
-        self.whisper = None
-
         self._emit_event({"type": "status", "status": "idle", "model": "stopped", "level": 0.0})
 
         print("[AppCore] FlowCore stopped.")
 
     def _init_whisper(self) -> None:
-        """Initialize the Whisper engine from config."""
-        model_name = self.config.get("stt_model", "large-v3-turbo")
-        device = self.config.get("stt_device", "auto")
-        compute_type = self.config.get("stt_compute_type", "")
-        self.whisper = WhisperEngine(model_name, device, compute_type)
-        self._emit_event({"type": "model_loaded", "model": model_name, "device": device})
+        """Kept for compatibility — the real engine lazy-loads Whisper itself."""
+        if self.engine is not None:
+            self.engine._load_whisper()
+            self._emit_event({"type": "model_loaded", "model": self.engine.stt_model})
 
     # -----------------------------------------------------------------
     # Audio Callback
@@ -607,15 +708,46 @@ class AppCoreManager:
 
     def _on_hotkey_vad(self) -> None:
         """VAD auto-dictation toggle."""
-        self._toggle_recording()
+        self._toggle_vad()
+
+    def _toggle_vad(self) -> None:
+        """Toggle hands-free VAD on the real engine."""
+        if self.engine is not None:
+            self.engine.toggle_vad()
 
     def _toggle_recording(self) -> None:
-        """Toggle the dictation recording state."""
-        self._emit_event({
-            "type": "toggle_recording",
-            "requested": True,
-        })
-        print("[AppCore] Dictation toggle requested (UI to action via BridgeAPI)")
+        """Toggle the dictation recording state on the real engine."""
+        if self.engine is not None:
+            self.engine.toggle_ptt()
+            print("[AppCore] Dictation toggle -> engine.toggle_ptt()")
+
+    # --- Engine-backed properties used by BridgeAPI ---------------------
+
+    @property
+    def whisper(self):
+        """The real engine's Whisper model wrapper (lazy-loaded)."""
+        if self.engine is None:
+            return None
+        return getattr(self.engine, "_whisper", None)
+
+    def _load_whisper(self):
+        """Force the engine to load its Whisper model now."""
+        if self.engine is not None:
+            self.engine._load_whisper()
+
+    @property
+    def auto_learner(self):
+        if self.engine is None:
+            return None
+        return getattr(self.engine, "auto_learner", None)
+
+    @property
+    def recording(self) -> bool:
+        return bool(self.engine.recording) if self.engine is not None else False
+
+    @property
+    def vad_mode(self) -> bool:
+        return bool(self.engine.vad_mode) if self.engine is not None else False
 
     # -----------------------------------------------------------------
     # Tray Callback
@@ -671,8 +803,26 @@ class AppCoreManager:
                 self._history = self._history[:self._max_history]
 
     def get_history(self) -> List[dict]:
-        """Return the transcription history for the React UI to display."""
-        with self._lock:
+        """Return recent dictation sessions from the engine's DB."""
+        if self.db is None:
+            return []
+        try:
+            rows = self.db.execute(
+                "SELECT started_at, duration_s, words, raw_text, latency_ms, mode "
+                "FROM sessions ORDER BY id DESC LIMIT 20"
+            ).fetchall()
+            return [
+                {
+                    "timestamp": r[0],
+                    "duration": r[1],
+                    "words": r[2],
+                    "raw": r[3],
+                    "latency": r[4],
+                    "mode": r[5],
+                }
+                for r in rows
+            ]
+        except Exception:
             return list(self._history)
 
     # -----------------------------------------------------------------

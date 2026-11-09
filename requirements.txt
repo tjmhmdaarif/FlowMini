@@ -18,7 +18,8 @@ SpeechRecognition>=3.14
 pystray>=0.19
 Pillow>=10.0
 
-# Day 8: WebSocket bridge to the React UI
+# Day 8: React UI host window (app.py + web/dist)
+pywebview>=5.0
 websockets>=15.0
 
 # --- dev / build only ---

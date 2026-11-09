@@ -64,7 +64,7 @@ export default function App({ adapter: injected }: AppProps = {}) {
   adapterRef.current = adapter;
   stateRef.current = state;
 
-  useEffect(() => adapter.attach((event) => dispatch(toAction(event))), [adapter]);
+  useEffect(() => adapter.attach((event: FlowEvent) => dispatch(toAction(event))), [adapter]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -267,7 +267,7 @@ export default function App({ adapter: injected }: AppProps = {}) {
               latencyMs={state.latencyMs}
               edits={state.edits}
             />
-            <EventStream lines={state.logs} />
+            <EventStream lines={state.logs} partial={state.partial} />
           </motion.section>
         </main>
 

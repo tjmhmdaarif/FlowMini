@@ -16,7 +16,11 @@ Features:
 import os
 import sys
 import json
-import Path
+import time
+import functools
+import http.server
+import socketserver
+import threading
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -26,14 +30,11 @@ from pathlib import Path
 if getattr(sys, "frozen", False):
     # PyInstaller bundle
     BASE_DIR = Path(sys._MEIPASS)
-    # Frontend dist is bundled inside the exe; we look relative to exe dir
+    # Frontend dist is bundled inside the exe at web/dist.
     FRONTEND_DIST = Path(sys._MEIPASS) / "web" / "dist"
-    # Also check _MEIPASS / "_MEIPASS/web/dist"
-    if not FRONTEND_DIST.exists():
-        FRONTEND_DIST = Path(sys._MEIPASS) / "web" / "dist"
 else:
-    # Development mode
-    BASE_DIR = Path(__file__).parent.parent.parent  # project root
+    # Development mode — app.py lives at the project root.
+    BASE_DIR = Path(__file__).parent
     FRONTEND_DIST = BASE_DIR / "web" / "dist"
 
 
@@ -68,10 +69,9 @@ def load_frontend_html() -> str:
 
     if getattr(sys, "frozen", False):
         candidates.append(FRONTEND_DIST / "index.html")
-        candidates.append(Path(sys._MEIPASS) / "frontend" / "dist" / "index.html")
 
-    # Development path: project root / frontend / dist
-    dev_path = BASE_DIR / "frontend" / "dist" / "index.html"
+    # Development path: project root / web / dist
+    dev_path = FRONTEND_DIST / "index.html"
     if dev_path.exists():
         candidates.append(dev_path)
 
@@ -115,6 +115,29 @@ def load_frontend_html() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Frontend static server
+# ---------------------------------------------------------------------------
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):  # silence per-request logging
+        pass
+
+
+def start_frontend_server(directory: Path, port: int = 0):
+    """Serve `directory` over loopback HTTP and return (httpd, port).
+
+    pywebview's `html=` loads a string with no base URL, so the built
+    index.html's absolute `/assets/...` references fail. Serving the dist
+    directory over http://127.0.0.1 lets those references resolve.
+    """
+    handler = functools.partial(_QuietHandler, directory=str(directory))
+    httpd = socketserver.TCPServer(("127.0.0.1", port), handler)
+    actual_port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, actual_port
+
+
+# ---------------------------------------------------------------------------
 # Main App Entry
 # ---------------------------------------------------------------------------
 
@@ -125,15 +148,17 @@ def main():
     # -----------------------------------------------------------------
     # Initialize BridgeAPI (Python → React bridge)
     # -----------------------------------------------------------------
-    bridge_api = create_bridge_api()
+    # Initialize the engine + BridgeAPI
+    # -----------------------------------------------------------------
+    # One AppCoreManager owns the real FlowMini engine; the BridgeAPI is the
+    # js_api surface the React UI calls. They MUST share the same instance,
+    # otherwise the UI drives an unstarted core.
+    core = AppCoreManager()
+    bridge_api = create_bridge_api(core)
+    core.bridge_api = bridge_api
 
     # Track start time for UI uptime display
     bridge_api._start_time = time.time()
-
-    # -----------------------------------------------------------------
-    # Initialize AppCoreManager (Python backend)
-    # -----------------------------------------------------------------
-    core = AppCoreManager(bridge_api=bridge_api)
 
     # Start all background services (audio, hotkeys, tray, Whisper model)
     try:
@@ -155,16 +180,22 @@ def main():
     # -----------------------------------------------------------------
     # Create pywebview Window
     # -----------------------------------------------------------------
+    httpd = None
     try:
         import webview
 
         window_title = "FlowMini — Voice Dictation"
 
+        # Serve the built frontend over loopback so /assets/* resolves.
+        httpd, port = start_frontend_server(FRONTEND_DIST)
+        frontend_url = f"http://127.0.0.1:{port}/index.html"
+        print(f"[FlowMini] Frontend served at {frontend_url}")
+
         # Create the webview window with js_api=BridgeAPI
         # The BridgeAPI instance exposes methods as window.pywebview.api.MethodName()
         webview.create_window(
             title=window_title,
-            html=frontend_html,
+            url=frontend_url,
             js_api=bridge_api,  # <-- Python methods exposed to React
             # Optional: resizeable, on_top, etc.
             # width=1400, height=900,
@@ -205,6 +236,10 @@ def main():
     # Clean shutdown
     # -----------------------------------------------------------------
     print("[FlowMini] Shutting down...")
+    try:
+        httpd.shutdown()
+    except Exception:
+        pass
     if core:
         core.stop()
     print("[FlowMini] Goodbye!")

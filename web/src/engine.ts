@@ -16,6 +16,12 @@ export type Settings = {
   stt_model: string;
   stt_device: string;
   mic_device: string;
+  /** Parity with the Tkinter UI. */
+  profiles: boolean;
+  autostart: boolean;
+  hud: boolean;
+  detect_language: boolean;
+  auto_learn: boolean;
 };
 
 export type LogLine = { id: number; text: string; tag: Tag };
@@ -114,6 +120,11 @@ export const initialState: State = {
     stt_model: "large-v3-turbo",
     stt_device: "auto",
     mic_device: "",
+    profiles: true,
+    autostart: false,
+    hud: true,
+    detect_language: false,
+    auto_learn: true,
   },
   logs: [],
   connected: false,

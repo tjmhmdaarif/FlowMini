@@ -1,7 +1,7 @@
 /* The single seam between the FlowMini React UI and the Python BridgeAPI.
  *
  * The UI never invents transcripts. It renders whatever the BridgeAPI emits.
- * This adapter calls window.pywebview.api.MethodName() — no WebSocket, no ports,
+ * This adapter calls window.pywebview.api.MethodName() - no WebSocket, no ports,
  * pure in-process bridging. Works both in development and when packaged with
  * PyInstaller (the BridgeAPI methods are available in the pywebview window).
  *
@@ -12,7 +12,7 @@
 
 import type { Edit, Settings, Status, Tag } from "./engine";
 
-/* ── Types ────────────────────────────────────────────────────────────────── */
+/* Types */
 
 export type FlowEvent =
   | { type: "status"; status: Status }
@@ -34,7 +34,6 @@ export type FlowEvent =
   | { type: "error"; message: string };
 
 export type FlowMiniAdapter = {
-  /** Subscribe to engine events. Return an unsubscribe function. */
   attach: (listener: (event: FlowEvent) => void) => () => void;
   startPushToTalk: () => void;
   stopPushToTalk: () => void;
@@ -44,217 +43,359 @@ export type FlowMiniAdapter = {
   undo: () => void;
 };
 
-/* ── In‑process BridgeAPI adapter ──────────────────────────────────────────── */
+/* BridgeAPI access */
 
-let listener: ((event: FlowEvent) => void) | null = null;
+type BridgeStatus = {
+  status?: Status;
+  model?: string;
+  level?: number;
+  active?: boolean;
+  uptime?: number;
+  partial_transcript?: string;
+};
 
-/**
- * Read the latest event from the Python BridgeAPI queue.
- * This is called repeatedly by a setInterval in main.tsx.
- * The BridgeAPI drains events from AppCoreManager and makes them
- * available via a special dispatch mechanism.
- */
-function pollBridgeAPI(): FlowEvent | null {
-  // Try to get the latest event from the bridge
-  // The BridgeAPI._emit_event queues events that React can read
-  // We use a simple approach: try to eval a small JS that reads the queue
-  // If that fails, return null (caller will skip this poll cycle)
+type BridgeConfig = {
+  language?: string;
+  stt_engine?: string;
+  stt_model?: string;
+  stt_device?: string;
+  cleanup_mode?: Settings["cleanup"];
+  style_preset?: Settings["style"];
+  show_hud?: boolean;
+  translate_to_english?: boolean;
+  start_with_windows?: boolean;
+  developer_mode?: boolean;
+  mic_device?: string;
+  vad_enabled?: boolean;
+  app_profiles_enabled?: boolean;
+  detect_language?: boolean;
+  auto_learn?: boolean;
+};
 
-  // In production, the BridgeAPI events are delivered via pywebview's
-  // built-in message mechanism. We expose a tiny JS helper that React
-  // can call, or we rely on the React side calling bridge_api.drain_events().
-  // For now, we return null and let the React side handle it via useEffect.
-  return null;
+interface BridgeApi {
+  get_status(): BridgeStatus | Promise<BridgeStatus>;
+  get_config(): BridgeConfig | Promise<BridgeConfig>;
+  get_learn_stats(): unknown;
+  get_stats(): unknown;
+  toggle_recording(): unknown;
+  set_setting(key: string, value: unknown): unknown;
+  change_model(model: string): unknown;
+  get_transcription_history(): unknown;
+  minimize_to_tray(): unknown;
+  close_app(): unknown;
+  initialize(): unknown;
+  self_test(): unknown;
+  undo_last(): unknown;
+  refresh_stats(): unknown;
 }
 
-/** Real adapter that talks to the Python BridgeAPI via js_api. */
-export function createBridgeAPIIAdapter(): FlowMiniAdapter {
-  // This adapter assumes it runs in a pywebview window created with
-  // js_api=BridgeAPI. The BridgeAPI instance is available as
-  // window.pywebview.api and exposes the methods the UI needs.
+const CONFIG_KEY: Record<string, string> = {
+  cleanup: "cleanup_mode",
+  style: "style_preset",
+  translate: "translate_to_english",
+  developer: "developer_mode",
+  vad: "vad_enabled",
+  profiles: "app_profiles_enabled",
+  autostart: "start_with_windows",
+  hud: "show_hud",
+  detect_language: "detect_language",
+  auto_learn: "auto_learn",
+};
 
-  const emit = (event: FlowEvent) => {
-    listener?.(event);
+function bridgeApi(): BridgeApi | null {
+  const win = (window as unknown as { pywebview?: { api?: BridgeApi } }).pywebview;
+  return win?.api ?? null;
+}
+
+function call(method: keyof BridgeApi, ...args: unknown[]): unknown {
+  const api = bridgeApi();
+  if (!api) return null;
+  const fn = api[method] as unknown as (...a: unknown[]) => unknown;
+  if (typeof fn !== "function") return null;
+  try {
+    return fn.apply(api, args);
+  } catch (e) {
+    console.warn("BridgeAPI." + String(method) + "() error:", e);
+    return null;
+  }
+}
+
+/* In-process BridgeAPI adapter */
+
+export function createBridgeAPIIAdapter(): FlowMiniAdapter {
+  let listener: ((event: FlowEvent) => void) | null = null;
+  let timer: number | undefined;
+  let lastStatus = "";
+  let lastLevel = -1;
+  let lastPartial = "";
+
+  const emit = (event: FlowEvent) => listener?.(event);
+
+  const poll = async (): Promise<void> => {
+    const api = bridgeApi();
+    if (!api) return;
+
+    try {
+      const status = await api.get_status();
+      if (status) {
+        if (status.status && status.status !== lastStatus) {
+          lastStatus = status.status;
+          emit({ type: "status", status: status.status });
+        }
+        const level = Number(status.level ?? 0);
+        if (Math.abs(level - lastLevel) > 0.01) {
+          lastLevel = level;
+          emit({ type: "level", level });
+        }
+        const partial = String(status.partial_transcript ?? "");
+        if (partial !== lastPartial) {
+          lastPartial = partial;
+          if (partial) emit({ type: "partial", text: partial });
+        }
+      }
+    } catch {
+      /* bridge not ready yet */
+    }
+
+    try {
+      const cfg = await api.get_config();
+      if (cfg) {
+        emit({
+          type: "settings",
+          patch: {
+            language: cfg.language ?? "en-US",
+            cleanup: cfg.cleanup_mode ?? "light",
+            style: cfg.style_preset ?? "casual",
+            translate: Boolean(cfg.translate_to_english),
+            developer: Boolean(cfg.developer_mode),
+            vad: Boolean(cfg.vad_enabled),
+            stt_model: cfg.stt_model ?? "large-v3-turbo",
+            stt_device: cfg.stt_device ?? "auto",
+            mic_device: cfg.mic_device ?? "",
+            profiles: Boolean(cfg.app_profiles_enabled),
+            autostart: Boolean(cfg.start_with_windows),
+            hud: Boolean(cfg.show_hud),
+            detect_language: Boolean(cfg.detect_language),
+            auto_learn: Boolean(cfg.auto_learn),
+          },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   return {
     attach(next) {
       listener = next;
-
-      // Immediately notify the Python side that we're connected
-      // The React side can call bridge_api.get_status() to get initial state
-      try {
-        // Signal connection — the UI will call bridge_api.get_status() on mount
-        emit({ type: "connected", value: true });
-      } catch (e) {
-        // Bridge not available yet — will retry on next poll
-      }
-
+      emit({ type: "connected", value: true });
+      call("initialize");
+      void poll();
+      timer = window.setInterval(() => void poll(), 250);
       return () => {
         listener = null;
+        if (timer !== undefined) window.clearInterval(timer);
+        timer = undefined;
       };
     },
 
-    /** Push-to-talk: ask Python to start listening. */
     startPushToTalk() {
-      try {
-        // Call BridgeAPI.toggle_recording() — it emits a toggle event
-        // The AppCoreManager _on_hotkey_trigger() will handle the recording start
-        // But since we're using the BridgeAPI, we call the explicit action
-        // (BridgeAPI.toggle_recording → core._on_hotkey_trigger → _toggle_recording)
-        // However, BridgeAPI.toggle_recording returns {"action": "toggle", "state": "pending"}
-        // The actual recording is started by the hotkey listener (Ctrl+Alt+D)
-        // For push-to-talk, we directly invoke the core's recording state
-        // We use window.pywebview.api to call Python methods
-        // NOTE: This requires the window to have js_api=BridgeAPI set
-        // In practice, the dictation toggle is driven by the global hotkey (Ctrl+Alt+D)
-        // but we also expose it as a UI button
-        // For now, emit a log — the real PTT is handled by the hotkey listener
-        emit({
-          type: "log",
-          text: "Push-to-talk engaged (hotkey: Ctrl+Alt+D)",
-          tag: "dim",
-        });
-      } catch (e) {
-        emit({
-          type: "error",
-          message: "BridgeAPI not available — is the app running in pywebview?",
-        });
-      }
+      call("toggle_recording");
     },
 
-    /** Stop push-to-talk. */
     stopPushToTalk() {
-      try {
-        emit({
-          type: "log",
-          text: "Push-to-talk released",
-          tag: "dim",
-        });
-      } catch (e) {
-        emit({ type: "error", message: "Bridge not available" });
-      }
+      call("toggle_recording");
     },
 
-    /** Set a setting (model, device, cleanup mode, style, VAD, etc.). */
-    setSetting(key: keyof Settings, value: Settings[keyof Settings]) {
-      try {
-        // Call BridgeAPI.set_setting if it exists, otherwise fall back to
-        // the AppCoreManager method exposed via BridgeAPI
-        // The BridgeAPI doesn't have set_setting directly, but AppCoreManager
-        // has change_model_action, toggle_recording_action, etc.
-        // We dispatch the change through the BridgeAPI's get_status path,
-        // or call the core methods directly if available.
-
-        // Map UI settings to core actions
-        if (key === "stt_model" && value) {
-          // Change Whisper model
-          // The BridgeAPI.change_model() will re-init the model
-          // We'll call it via the React-side eval, but the actual Python call
-          // happens when the UI dispatches and the BridgeAPI method is invoked
-          // For now, we'll just log and the React side can call bridge_api.change_model()
-          emit({
-            type: "log",
-            text: `model → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "cleanup") {
-          emit({
-            type: "log",
-            text: `cleanup mode → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "style") {
-          emit({
-            type: "log",
-            text: `style preset → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "translate") {
-          emit({
-            type: "log",
-            text: `translate → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "vad") {
-          emit({
-            type: "log",
-            text: `hands-free VAD → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "language") {
-          emit({
-            type: "log",
-            text: `language → ${String(value)}`,
-            tag: "dim",
-          });
-        } else if (key === "mic_device") {
-          emit({
-            type: "log",
-            text: `mic device → ${String(value)}`,
-            tag: "dim",
-          });
-        } else {
-          emit({
-            type: "settings",
-            patch: { [key]: value } as Partial<Settings>,
-          });
-        }
-      } catch (e) {
-        emit({ type: "error", message: `setSetting error: ${String(e)}` });
-      }
+    setSetting(key, value) {
+      const configKey = CONFIG_KEY[key] ?? key;
+      call("set_setting", configKey, value);
+      emit({ type: "settings", patch: { [key]: value } as Partial<Settings> });
     },
 
-    /** Self-test: run the STT self-test via the core. */
     selfTest() {
-      try {
-        // Call BridgeAPI.self_test or AppCoreManager's tray self-test
-        // The SystemTray._run_selftest() runs the STT self-test
-        emit({
-          type: "log",
-          text: "Self-test running (STT model verification)",
-          tag: "dim",
-        });
-        // In a full impl, we'd call window.pywebview.api.self_test()
-        // But the tray self-test is available via the tray icon menu
-      } catch (e) {
-        emit({ type: "error", message: `selfTest error: ${String(e)}` });
-      }
+      call("self_test");
+      emit({
+        type: "log",
+        text: "Self-test started — check the tray log for results.",
+        tag: "dim",
+      });
     },
 
-    /** Refresh session stats from the core. */
     refreshStats() {
-      try {
-        // Call bridge_api.get_status() to get current stats
-        // The UI will re-render from the latest state
-        emit({
-          type: "log",
-          text: "Stats refreshed from core",
-          tag: "dim",
-        });
-      } catch (e) {
-        emit({ type: "error", message: `refreshStats error: ${String(e)}` });
+      void poll();
+      const stats = call("refresh_stats");
+      if (stats && typeof stats === "object") {
+        emit({ type: "log", text: "Stats refreshed from engine", tag: "ok" });
       }
     },
 
-    /** Undo raw transcript. */
     undo() {
-      try {
-        // Call BridgeAPI.close_app or the core's undo path
-        // The AppCoreManager has get_history() and the UI can restore raw
-        emit({
-          type: "log",
-          text: "Undo raw transcript",
-          tag: "dim",
-        });
-      } catch (e) {
-        emit({ type: "error", message: `undo error: ${String(e)}` });
+      const res = call("undo_last");
+      if (res && (res as { status?: string }).status === "ok") {
+        emit({ type: "log", text: "Undid transform — raw transcript pasted", tag: "warn" });
+      } else {
+        emit({ type: "log", text: "Nothing to undo yet", tag: "warn" });
       }
     },
   };
 }
 
-/* ── Legacy: WebSocket adapter (kept for reference, not used in pywebview mode) ────── */
+/* Unconnected adapter (no engine) */
+
+const NOT_WIRED = "Not wired to an engine.";
+
+export function createUnconnectedAdapter(): FlowMiniAdapter {
+  let listener: ((event: FlowEvent) => void) | null = null;
+  const emit = (event: FlowEvent) => listener?.(event);
+
+  return {
+    attach(next) {
+      listener = next;
+      emit({ type: "connected", value: false });
+      return () => {
+        listener = null;
+      };
+    },
+    startPushToTalk() {
+      emit({ type: "log", text: NOT_WIRED, tag: "warn" });
+    },
+    stopPushToTalk() {
+      emit({ type: "log", text: NOT_WIRED, tag: "warn" });
+    },
+    setSetting(key, value) {
+      emit({ type: "settings", patch: { [key]: value } as Partial<Settings> });
+      emit({ type: "log", text: String(key) + " -> " + String(value) + " - local UI state", tag: "dim" });
+    },
+    selfTest() {
+      emit({ type: "log", text: "Self-test belongs to the engine - connect an adapter.", tag: "warn" });
+    },
+    refreshStats() {
+      emit({ type: "log", text: "Session stats come from the engine - connect an adapter.", tag: "dim" });
+    },
+    undo() {
+      emit({ type: "log", text: "Undo needs the raw transcript from the engine.", tag: "warn" });
+    },
+  };
+}
+
+/* Preview adapter (design review, synthetic states) */
+
+type Sample = {
+  raw: string;
+  final: string;
+  language: string;
+  confidence: number;
+  edits: Edit[];
+  latencyMs: number;
+};
+
+const SAMPLES: Sample[] = [
+  {
+    raw: "um let's fix the the parser no the tokenizer",
+    final: "Let's fix the tokenizer.",
+    language: "en",
+    confidence: 0.97,
+    edits: [{ type: "filler_removed", source: "um" }],
+    latencyMs: 1180,
+  },
+  {
+    raw: "open square bracket x close square bracket",
+    final: "[x]",
+    language: "en",
+    confidence: 0.95,
+    edits: [{ type: "spoken_command", source: "open square bracket" }],
+    latencyMs: 960,
+  },
+  {
+    raw: "import os",
+    final: "import os",
+    language: "en",
+    confidence: 0.94,
+    edits: [],
+    latencyMs: 1430,
+  },
+];
+
+export function createPreviewAdapter(): FlowMiniAdapter {
+  let listener: ((event: FlowEvent) => void) | null = null;
+  let ticker: number | undefined;
+  let finish: number | undefined;
+  let recording = false;
+  let take = 0;
+
+  const emit = (event: FlowEvent) => listener?.(event);
+  const clear = () => {
+    if (ticker) window.clearInterval(ticker);
+    if (finish) window.clearTimeout(finish);
+    ticker = undefined;
+    finish = undefined;
+  };
+
+  return {
+    attach(next) {
+      listener = next;
+      emit({ type: "connected", value: true });
+      emit({ type: "log", text: "Preview adapter attached - synthetic states for design review.", tag: "warn" });
+      return () => {
+        listener = null;
+        clear();
+      };
+    },
+    startPushToTalk() {
+      if (recording) return;
+      recording = true;
+      const sample = SAMPLES[take % SAMPLES.length];
+      const words = sample.raw.split(" ");
+      emit({ type: "status", status: "recording" });
+      emit({ type: "partial", text: "" });
+      emit({ type: "log", text: "preview - recording (no microphone in use)", tag: "dim" });
+      let step = 0;
+      ticker = window.setInterval(() => {
+        step += 1;
+        emit({ type: "level", level: 0.3 + Math.random() * 0.65 });
+        const shown = Math.min(words.length, Math.ceil((step / 6) * words.length));
+        emit({ type: "partial", text: words.slice(0, shown).join(" ") });
+      }, 380);
+    },
+    stopPushToTalk() {
+      if (!recording) return;
+      recording = false;
+      clear();
+      const sample = SAMPLES[take % SAMPLES.length];
+      emit({ type: "status", status: "processing" });
+      emit({ type: "level", level: 0 });
+      finish = window.setTimeout(() => {
+        emit({
+          type: "result",
+          raw: sample.raw,
+          final: sample.final,
+          language: sample.language,
+          confidence: sample.confidence,
+          edits: sample.edits,
+          latencyMs: sample.latencyMs,
+        });
+        emit({ type: "status", status: "idle" });
+        take += 1;
+      }, 900);
+    },
+    setSetting(key, value) {
+      emit({ type: "settings", patch: { [key]: value } as Partial<Settings> });
+      emit({ type: "log", text: "preview - " + String(key) + " -> " + String(value), tag: "dim" });
+    },
+    selfTest() {
+      emit({ type: "log", text: "Self-test belongs to the engine - connect an adapter.", tag: "warn" });
+    },
+    refreshStats() {
+      emit({ type: "log", text: "Session stats come from the engine - connect an adapter.", tag: "dim" });
+    },
+    undo() {
+      emit({ type: "log", text: "Undo needs the raw transcript from the engine.", tag: "warn" });
+    },
+  };
+}
+
+/* Legacy: WebSocket adapter (kept for reference, not used in pywebview mode) */
 
 /*
 export function createSocketAdapter(url = "ws://127.0.0.1:8765"): FlowMiniAdapter {

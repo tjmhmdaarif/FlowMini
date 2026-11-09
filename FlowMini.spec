@@ -37,8 +37,15 @@ datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
+# React frontend (built by `npm run build` into web/dist) — bundled so the
+# pywebview window can load it from sys._MEIPASS/web/dist.
+datas.append(("web/dist", "web/dist"))
+
+# pywebview is imported lazily inside app.py; make sure PyInstaller sees it.
+hiddenimports += ["webview"]
+
 a = Analysis(
-    ["flowmini_app.py"],
+    ["app.py"],
     pathex=[],
     binaries=binaries,
     datas=datas,

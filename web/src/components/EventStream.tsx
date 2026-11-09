@@ -7,11 +7,22 @@ const TONE: Record<Tag, string> = {
   dim: "text-mute",
 };
 
-export function EventStream({ lines }: { lines: LogLine[] }) {
+export function EventStream({ lines, partial }: { lines: LogLine[]; partial: string }) {
   const recent = lines.slice(-4).reverse();
+
+  // Show live partial transcript at the top when actively listening/VAD mode
+  const livePartial = partial.trim();
 
   return (
     <div className="min-w-0">
+      {/* Live partial transcript banner — appears during VAD/recording */}
+      {livePartial.length > 0 && (
+        <div className="mt-2 p-2 rounded border-t border-crimson/60 border-b border-crimson/60 bg-crimson/5 text-crimson/90 font-mono text-[10px] overflow-x-auto">
+          <span className="eyebrow">live</span>
+          <span className="font-mono">{livePartial}</span>
+        </div>
+      )}
+
       <div className="flex items-baseline gap-3">
         <span className="eyebrow">04</span>
         <span className="eyebrow">event stream</span>

@@ -242,6 +242,45 @@ export function SettingsSheet({
                 </Field>
               </div>
 
+              <p className="eyebrow mt-8">workflow</p>
+              <div className="mt-1">
+                <Field label="Per-app profiles">
+                  <Switch
+                    on={settings.profiles}
+                    onChange={(value) => onChange("profiles", value)}
+                    label="Per-app profiles"
+                  />
+                </Field>
+                <Field label="Start with Windows">
+                  <Switch
+                    on={settings.autostart}
+                    onChange={(value) => onChange("autostart", value)}
+                    label="Start with Windows"
+                  />
+                </Field>
+                <Field label="Show HUD">
+                  <Switch
+                    on={settings.hud}
+                    onChange={(value) => onChange("hud", value)}
+                    label="Show HUD"
+                  />
+                </Field>
+                <Field label="Detect language">
+                  <Switch
+                    on={settings.detect_language}
+                    onChange={(value) => onChange("detect_language", value)}
+                    label="Detect language"
+                  />
+                </Field>
+                <Field label="Auto-learn corrections">
+                  <Switch
+                    on={settings.auto_learn}
+                    onChange={(value) => onChange("auto_learn", value)}
+                    label="Auto-learn corrections"
+                  />
+                </Field>
+              </div>
+
               <p className="eyebrow mt-8">session</p>
               <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
                 <SheetAction onClick={onSelfTest}>Self-test</SheetAction>
@@ -253,7 +292,7 @@ export function SettingsSheet({
             </div>
 
             <p className="mt-6 border-t border-white/6 pt-4 font-mono text-[9px] leading-relaxed tracking-[0.04em] text-mute">
-              every control calls adapter.setSetting — nothing here reaches your engine directly
+              every control calls adapter.setSetting — wired live to the engine via BridgeAPI
             </p>
           </motion.aside>
         </>

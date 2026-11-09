@@ -263,7 +263,7 @@ FONT_BASE = {
 FONTS = dict(FONT_BASE)  # refined in FlowMiniApp.__init__ via _init_fonts()
 
 #: App version shown in the UI and shipped on GitHub releases.
-APP_VERSION = "1.1.0.6"  # build numbering: 1.1.0.N rises with every build,
+APP_VERSION = "1.1.0.7"  # build numbering: 1.1.0.N rises with every build,
                           # Day 7: streaming partial transcript
 
 

@@ -25,13 +25,11 @@ if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
     # Development mode — project root
-    BASE_DIR = Path(__file__).parent.parent.parent
+    BASE_DIR = Path(__file__).parent
 
-FRONTEND_DIR = BASE_DIR / "frontend"
-WEB_DIR = BASE_DIR / "web"  # existing web/ dir (old UI)
-DIST_DIR = FRONTEND_DIR / "dist"
-BUILD_DIR = FRONTEND_DIR / "build"
-SPEC_FILE = Path(__file__).parent / "flowmini.spec"
+WEB_DIR = BASE_DIR / "web"
+DIST_DIR = WEB_DIR / "dist"
+SPEC_FILE = BASE_DIR / "FlowMini.spec"
 
 
 # ---------------------------------------------------------------------------
@@ -39,9 +37,9 @@ SPEC_FILE = Path(__file__).parent / "flowmini.spec"
 # ---------------------------------------------------------------------------
 
 def build_frontend():
-    """Run npm run build inside the frontend directory."""
+    """Run npm run build inside the web directory."""
     print("[Build] Step 1: Building React frontend with Vite...")
-    frontend_dir = FRONTEND_DIR
+    frontend_dir = WEB_DIR
     if not frontend_dir.exists():
         print(f"[Error] Frontend directory not found: {frontend_dir}")
         return False
@@ -90,37 +88,38 @@ def prepare_spec():
     # Create a custom .spec file that bundles the frontend dist
     spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 
-block_cimport = True
+import PyInstaller.utils.hooks
 
-import PyInstaller.candidates.raw
-import PyInstaller.runner.cui
+# faster_whisper needs its tokenizer/asset files at runtime.
+try:
+    import faster_whisper
+    _fw_assets = os.path.join(os.path.dirname(faster_whisper.__file__), "assets")
+    datas = [(_fw_assets, "faster_whisper/assets")] if os.path.isdir(_fw_assets) else []
+except ImportError:
+    datas = []
 
+binaries = []
+hiddenimports = [
+    "faster_whisper", "sounddevice", "numpy", "pyperclip", "pyautogui",
+    "pynput", "pystray", "PIL", "keyboard", "asyncio", "json", "threading",
+]
+
+# React frontend (built by npm run build into web/dist) — bundled so the
+# pywebview window can load it from sys._MEIPASS/web/dist.
+datas.append(("{DIST_DIR}", "web/dist"))
+
+# pywebview is imported lazily inside app.py; make sure PyInstaller sees it.
+hiddenimports += ["webview"]
+
+import os
 a = Analysis(
-    ['app.py'],
-    pathex=[{BASE_DIR!r}],
-    binaries=[],
-    datas=[
-        # Bundle the entire frontend dist directory
-        ('{DIST_DIR}', '{DIST_DIR}'),
-        # Include config.json if it exists alongside app.py
-        ('{CONFIG_PATH if False else ""}', '{CONFIG_PATH}' if CONFIG_PATH.exists() else ""),
-    ],
-    hiddenimports=[
-        'faster_whisper',
-        'sounddevice',
-        'numpy',
-        'pyperclip',
-        'pyautogui',
-        'pynput',
-        'pystray',
-        'PIL',
-        'keyboard',
-        'asyncio',
-        'json',
-        'threading',
-    ],
+    ["app.py"],
+    pathex=["{BASE_DIR}"],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={{}},
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
@@ -141,7 +140,7 @@ exe = EXE(
     strip=False,
     upx=True,
     upx_exclude=[],
-    console=False,  # Windowed (no console)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -157,9 +156,6 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name="FlowMini",
-    # Bundle frontend dist into the executable
-    {DIST_DIR}: f'./{DIST_DIR.name}',
-    here={BASE_DIR!r},
 )
 '''
 
